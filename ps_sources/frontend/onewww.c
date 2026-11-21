@@ -7,7 +7,7 @@
 
 #include "../lib/lodepng.h"
 #include "apple_fb_handoff.h"
-#include "compositor_layout.h"
+#include "compositor.h"
 #include "http_service.h"
 #include "net_image.h"
 #include "onewww_cookie.h"
@@ -54,9 +54,12 @@ static const char s_post_headers[] =
 static void task_stop(void);
 static int body_add(const uint8_t *piece, size_t n, size_t limit);
 
-static uint8_t s_fields[ONEWWW_FIELDS_BYTES];
+/* The picture on the screen: the compositor reads it in place of the
+ * Apple picture (apple_fb_reader_override). */
+static uint32_t s_frame[ONEWWW_FRAME_PIXELS];
 static struct {
     uint8_t mode, dirty, release, owner, push, pointer, buttons;
+    uint8_t shown;                  /* the compositor shows s_frame */
     uint8_t abort, closing;         /* stop the layout task */
     uint64_t slice_start, grow_shown;
     http_status_t done;             /* the response that the task works on */
@@ -713,18 +716,6 @@ static void load_poll(void)
 
 /* ---- Screen ------------------------------------------------------------ */
 
-static uint8_t cpu1_ready(void)
-{
-    return apple_fb_direct_ack_get() == apple_fb_direct_gen_get();
-}
-
-static void publish(uint32_t mode)
-{
-    uint32_t generation = apple_fb_direct_gen_get() + 1U;
-    if (generation == 0U) generation = 1U;
-    apple_fb_direct_publish(generation, mode);
-}
-
 static void present(void)
 {
     char left[HTTP_URL_MAX + 64U], right[48];
@@ -776,11 +767,10 @@ static void present(void)
                  limit > 0 ? (long)((int64_t)s.top * 100 / limit) : 100L);
     }
     onewww_compose(s.top, left, right, s.selected,
-                   s.pointer ? (int)s.px : -1, (int)s.py, s_fields);
-    /* The staging area is not cached: no flush is necessary. */
-    memcpy((void *)(uintptr_t)APPLE_DIRECT_SHR_STAGING_ADDR, s_fields,
-           sizeof(s_fields));
-    publish(APPLE_FB_DIRECT_SHOW);
+                   s.pointer ? (int)s.px : -1, (int)s.py, s_frame);
+    /* Tell the compositor that the picture changed. */
+    apple_fb_reader_override(s_frame);
+    if (!s.shown) { s.shown = 1U; compositor_request_full_refresh(); }
 }
 
 void onewww_poll(void)
@@ -801,10 +791,10 @@ void onewww_poll(void)
             s.dirty = 1U;
         }
     }
-    if (!cpu1_ready()) return;
-    if (s.release) {
-        s.release = 0U;
-        publish(APPLE_FB_DIRECT_RELEASE);
+    if (s.release) {                    /* the screen goes back to the Apple */
+        s.release = 0U; s.shown = 0U;
+        apple_fb_reader_override(NULL);
+        compositor_request_full_refresh();
         return;
     }
     if (s.mode == M_CLOSED || !s.dirty) return;
@@ -1046,7 +1036,7 @@ uint16_t onewww_status(uint8_t *out, uint16_t capacity)
     memcpy(out, "ATNW", 4U);
     out[4] = 1U;
     out[5] = s.mode;
-    out[6] = (uint8_t)apple_fb_direct_ack_get();
+    out[6] = 0U;
     out[7] = 0U;
     out[8] = (uint8_t)rows; out[9] = (uint8_t)(rows >> 8);
     out[10] = (uint8_t)(rows >> 16); out[11] = (uint8_t)(rows >> 24);

@@ -839,7 +839,9 @@ int screenshot_service_request(screenshot_service_kind_t kind,
         /* Keep the F1.2.2 Apple capture: raw renderer colors, its border
          * selection and fixed 2x/4x (SHR 2x/2x) size, independent of output
          * layout, compositor effects and the FPGA pixel mask. */
-        surface.base = (const uint32_t *)(uintptr_t)comp_apple_slot_addr[slot];
+        surface.base = apple_fb_reader_override_frame() != NULL ?
+            apple_fb_reader_override_frame() :
+            (const uint32_t *)(uintptr_t)comp_apple_slot_addr[slot];
         surface.scale_x = 2U;
         surface.scanlines_mode = g_scanlines_mode;
         if (mode == APPLE_FB_DISPLAY_MODE_GS) {

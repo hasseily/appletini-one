@@ -1316,7 +1316,8 @@ static int draw_apple_subwindow(uint16_t *fb, uint8_t slot)
     /* Skip the leading invisible guard pixels. The renderer also keeps
      * right-side guard pixels in the row stride so shifted composite
      * writes at the right edge cannot spill into the next row. */
-    const uint32_t *src_base =
+    const uint32_t *src_base = apple_fb_reader_override_frame() != NULL ?
+        apple_fb_reader_override_frame() :
         (const uint32_t *)(uintptr_t)comp_apple_slot_addr[slot];
     if (display_mode == APPLE_FB_DISPLAY_MODE_SHR) {
         if (s_border_enabled != 0u) {

@@ -1,6 +1,12 @@
 /* ONEWWW page renderer: lays a styled document tree out with proportional
- * fonts and draws it into Super Hi-Res rows. Blocks, lists, tables with
- * automatic column widths, links, colours.
+ * fonts. Blocks, lists, tables with automatic column widths, floats,
+ * links, form fields, pictures.
+ *
+ * The layout does not draw. It records what the page shows in a display
+ * list: text runs, filled boxes and pictures, each with its place on the
+ * page. onewww_compose() draws the part of the list that is in view into
+ * a 640 x 400 true-colour picture. A scroll draws the list again at a
+ * different row; a long page needs little memory.
  * No hardware access: the file also compiles on the host. */
 #include "onewww_render.h"
 
@@ -13,63 +19,39 @@
 #include "onewww_dom.h"
 #include "onewww_font.h"
 
-#define ROW_BYTES   160U
 #define PAGE_WIDTH  640
 #define MARGIN      12
-#define ROW_CHUNK   512U
-#define MAX_ROWS    60000U
-
-/* Row colours. A 640-mode row shows four colours; the four colour groups
- * of the 640 mode hold the same four. Each text row has its own paper and
- * ink. The first text on a row sets them. A row has one of three forms:
- *   one text colour:    paper, two mixed colours, ink (smooth edges);
- *   two text colours:   paper, one mixed colour, ink, accent
- *                       (smooth edges for the ink only);
- *   three text colours: paper, ink, accent, third (no smooth edges).
- * A row changes to the next form when a new colour comes; its pixels are
- * kept. A fourth colour takes the nearest of the three. */
-typedef struct {
-    uint16_t paper, ink;
-    uint16_t accent, third;             /* 0RGB, or OW_NO_COLOR: not used */
-} rowpal_t;
-
-/* Colours that the eye does not tell apart count as one. */
-#define SAME_COLOUR 2
-
-#define PAL_MAX     2048U
-#define PAL_STATUS  0x7FFFU             /* a row of the status line */
-#define PAL_PIC     0x8000U             /* + n: a 320-mode row of picture n */
-#define PIC_MAX     48U                 /* sixteen-colour pictures on a page */
-#define SCB_640     0x80U
-#define SCB_USED    0x01U               /* the row has its colours */
-#define INK_OF_ROW  OW_NO_COLOR         /* draw with the ink of the row */
+#define MAX_ROWS    2000000U
+#define INK_OF_ROW  OW_NO_COLOR         /* a line in a grey of the page ink */
 enum { LV_LIGHT = 1, LV_DARK = 2, LV_INK = 3 };
 
-static const uint16_t s_picture_palette[16] = {
-    0x0000, 0x0113, 0x0226, 0x034A, 0x047D, 0x07AF, 0x0FFF, 0x0FE8,
-    0x0FB3, 0x0F71, 0x0C32, 0x0713, 0x0141, 0x0272, 0x04A4, 0x0888,
-};
+/* ---- Display list ------------------------------------------------------ */
+
+enum { D_RECT, D_TEXT, D_IMAGE };
 
 typedef struct {
-    uint8_t *px;
-    uint8_t *scb;       /* SCB_640 and SCB_USED */
-    uint16_t *pal;      /* index in s_pal, PAL_STATUS, or PAL_PIC + n */
-    uint32_t rows;
-    uint32_t cap;
-    uint8_t fixed;
+    int32_t y;                  /* page row of the top */
+    int16_t x, w;
+    uint16_t h;
+    uint8_t kind, font;
+    uint16_t colour;            /* 0RGB */
+    uint16_t count;             /* D_TEXT: characters */
+    uint32_t data;              /* D_TEXT: place in the character store;
+                                 * D_IMAGE: number of the picture */
+} ditem_t;
+
+/* A page as a list. The name is from the time when the layout drew into
+ * a surface of rows. */
+typedef struct {
+    ditem_t *item;
+    uint32_t items, cap;
+    uint16_t *code;             /* the characters of all text runs */
+    uint32_t codes, code_cap;
+    uint32_t rows;              /* height of the page */
+    uint16_t paper, ink;        /* of the page */
 } surface_t;
 
-static surface_t s_page;
-static uint8_t s_status_px[ONEWWW_STATUS_ROWS * ROW_BYTES];
-static uint8_t s_status_scb[ONEWWW_STATUS_ROWS];
-static uint16_t s_status_pal[ONEWWW_STATUS_ROWS];
-
-/* Entry 0 is the page: its paper and ink are those of <body>. */
-static rowpal_t s_pal[PAL_MAX] = { { 0x0FFF, 0x0000, OW_NO_COLOR, OW_NO_COLOR } };
-static uint32_t s_pals = 1U;
-/* The sixteen colours of each picture that has rows of its own. */
-static uint16_t s_pic[PIC_MAX][16];
-static unsigned s_pics;
+static surface_t s_page = { NULL, 0U, 0U, NULL, 0U, 0U, 0U, 0x0FFF, 0x0000 };
 
 static int color_distance(uint16_t a, uint16_t b)
 {
@@ -79,189 +61,112 @@ static int color_distance(uint16_t a, uint16_t b)
     return (dr < 0 ? -dr : dr) + (dg < 0 ? -dg : dg) + (db < 0 ? -db : db);
 }
 
-static uint16_t pal_get(uint16_t paper, uint16_t ink, uint16_t accent,
-                        uint16_t third)
+static uint16_t mix(uint16_t a, uint16_t b, int part, int of)
 {
-    uint32_t best = 0U;
-    int best_d = 1 << 30;
-
-    for (uint32_t i = s_pals; i-- > 0U;) {       /* new entries are likely */
-        const rowpal_t *p = &s_pal[i];
-        int d;
-        if (p->paper == paper && p->ink == ink && p->accent == accent &&
-            p->third == third) return (uint16_t)i;
-        d = color_distance(p->paper, paper) * 4 + color_distance(p->ink, ink) +
-            (p->accent == accent ? 0 : 2) + (p->third == third ? 0 : 2);
-        if (d < best_d) { best_d = d; best = i; }
+    uint16_t out = 0;
+    for (int shift = 0; shift <= 8; shift += 4) {
+        const int ca = (a >> shift) & 15, cb = (b >> shift) & 15;
+        out |= (uint16_t)(((ca * (of - part) + cb * part + of / 2) / of) << shift);
     }
-    if (s_pals == PAL_MAX) return (uint16_t)best;
-    s_pal[s_pals].paper = paper; s_pal[s_pals].ink = ink; s_pal[s_pals].accent = accent;
-    s_pal[s_pals].third = third;
-    return (uint16_t)s_pals++;
+    return out;
 }
 
+/* The page is at least this high. */
 static int surface_need(surface_t *s, uint32_t rows)
 {
-    uint32_t cap;
-    uint8_t *px, *scb;
-    uint16_t *pal;
-
-    if (rows <= s->rows) return 0;
-    if (rows > s->cap) {
-        if (s->fixed || rows > MAX_ROWS) return -1;
-        cap = (rows + ROW_CHUNK) & ~(ROW_CHUNK - 1U);
-        px = realloc(s->px, (size_t)cap * ROW_BYTES);
-        if (px == NULL) return -1;
-        s->px = px;
-        scb = realloc(s->scb, cap);
-        if (scb == NULL) return -1;
-        s->scb = scb;
-        pal = realloc(s->pal, (size_t)cap * sizeof(uint16_t));
-        if (pal == NULL) return -1;
-        s->pal = pal;
-        s->cap = cap;
-    }
-    memset(s->px + (size_t)s->rows * ROW_BYTES, 0,
-           (size_t)(rows - s->rows) * ROW_BYTES);
-    memset(s->scb + s->rows, SCB_640, rows - s->rows);
-    memset(s->pal + s->rows, 0, (size_t)(rows - s->rows) * sizeof(uint16_t));
-    s->rows = rows;
+    if (rows > MAX_ROWS) return -1;
+    if (rows > s->rows) s->rows = rows;
     return 0;
 }
 
-static void put640(surface_t *s, int x, int y, uint8_t colour)
+static ditem_t *dl_new(surface_t *s)
 {
-    uint8_t *p;
-    unsigned shift;
-
-    if (x < 0 || x >= PAGE_WIDTH || y < 0 || (uint32_t)y >= s->rows) return;
-    p = s->px + (size_t)y * ROW_BYTES + ((unsigned)x >> 2);
-    shift = 6U - 2U * ((unsigned)x & 3U);
-    *p = (uint8_t)((*p & ~(3U << shift)) | ((unsigned)colour << shift));
-}
-
-/* Gives a row its colours when it has none. */
-static void row_claim(surface_t *s, int y, uint16_t paper, uint16_t ink)
-{
-    if (y < 0 || (uint32_t)y >= s->rows || (s->scb[y] & SCB_USED) != 0U ||
-        s->pal[y] >= PAL_STATUS) return;
-    s->pal[y] = pal_get(paper, ink, OW_NO_COLOR, OW_NO_COLOR);
-    s->scb[y] |= SCB_USED;
-}
-
-static void row_remap(surface_t *s, int y, const uint8_t *map)
-{
-    uint8_t *row = s->px + (size_t)y * ROW_BYTES;
-
-    for (unsigned i = 0; i < ROW_BYTES; i++) {
-        const uint8_t v = row[i];
-        if (v != 0U) {
-            row[i] = (uint8_t)((map[v >> 6] << 6) | (map[(v >> 4) & 3U] << 4) |
-                               (map[(v >> 2) & 3U] << 2) | map[v & 3U]);
-        }
+    if (s->items == s->cap) {
+        const uint32_t cap = s->cap ? s->cap * 2U : 1024U;
+        ditem_t *bigger = realloc(s->item, (size_t)cap * sizeof(ditem_t));
+        if (bigger == NULL) return NULL;
+        s->item = bigger; s->cap = cap;
     }
+    memset(&s->item[s->items], 0, sizeof(ditem_t));
+    return &s->item[s->items++];
 }
 
-/* Returns the pixel values of a row for the coverage levels 1..3 of a
- * colour, or NULL for a row that cannot take text. The row changes its
- * form when the colour is new for it. The paper colour itself gives
- * pixel value 0: text that is cut out of a coloured background. */
-static const uint8_t *row_map(surface_t *s, int y, uint16_t colour,
-                              uint16_t paper)
+/* Adds a filled box. Returns its number: a caller that does not know the
+ * height yet sets it later with dl_box(). -1 without memory. */
+static int dl_rect(surface_t *s, int x, int y, int w, int h, uint16_t colour)
 {
-    static const uint8_t plain[4] = { 0U, 1U, 2U, 3U };
-    static const uint8_t cut[4] = { 0U, 0U, 0U, 0U };
-    /* Two colours: the mixed colour belongs to the ink. The accent has
-     * hard edges, or it would get a fringe in the colour of the ink. */
-    static const uint8_t ink2[4] = { 0U, 1U, 1U, 2U };
-    static const uint8_t accent2[4] = { 0U, 0U, 3U, 3U };
-    static const uint8_t to2[4] = { 0U, 1U, 1U, 2U };       /* one -> two */
-    /* Three colours: no mixed colour. */
-    static const uint8_t ink3[4] = { 0U, 0U, 1U, 1U };
-    static const uint8_t accent3[4] = { 0U, 0U, 2U, 2U };
-    static const uint8_t third3[4] = { 0U, 0U, 3U, 3U };
-    /* two -> three: the mixed colour of the ink becomes ink. If it became
-     * paper, the text that is on the row already would lose pixels. */
-    static const uint8_t to3[4] = { 0U, 1U, 1U, 2U };
-    const rowpal_t *p;
-    int d_ink, d_accent, d_third;
+    ditem_t *it = dl_new(s);
 
-    if (y < 0 || (uint32_t)y >= s->rows || s->pal[y] >= PAL_PIC) return NULL;
-    if (s->pal[y] == PAL_STATUS) return plain;
-    row_claim(s, y, paper, colour == INK_OF_ROW ? s_pal[0].ink : colour);
-    p = &s_pal[s->pal[y]];
-    if (colour != INK_OF_ROW && colour == p->paper) return cut;
-    d_ink = colour == INK_OF_ROW ? 0 : color_distance(colour, p->ink);
-    if (p->accent == OW_NO_COLOR) {
-        if (d_ink <= SAME_COLOUR) return plain;
-        row_remap(s, y, to2);
-        s->pal[y] = pal_get(p->paper, p->ink, colour, OW_NO_COLOR);
-        return accent2;
-    }
-    d_accent = color_distance(colour, p->accent);
-    if (p->third == OW_NO_COLOR) {
-        if (d_ink <= SAME_COLOUR) return ink2;
-        if (d_accent <= SAME_COLOUR) return accent2;
-        row_remap(s, y, to3);
-        s->pal[y] = pal_get(p->paper, p->ink, p->accent, colour);
-        return third3;
-    }
-    d_third = color_distance(colour, p->third);
-    if (d_ink <= d_accent && d_ink <= d_third) return ink3;
-    return d_accent <= d_third ? accent3 : third3;
+    if (it == NULL) return -1;
+    it->kind = D_RECT; it->colour = colour;
+    it->x = (int16_t)x; it->y = y; it->w = (int16_t)(w < 0 ? 0 : w);
+    it->h = (uint16_t)(h < 0 ? 0 : h > 65535 ? 65535 : h);
+    return (int)(s->items - 1U);
 }
 
-/* Lines use the lightest level that the row has. */
-static uint8_t line_value(const uint8_t *map, unsigned level)
+/* Gives a box of dl_rect() its place and size. A high box is cut in
+ * parts: the height of one entry has 16 bits. */
+static void dl_box(surface_t *s, int index, int x, int y, int w, int h)
 {
-    return map[level] != 0U ? map[level] : map[3];
+    if (index < 0 || (uint32_t)index >= s->items) return;
+    s->item[index].x = (int16_t)x; s->item[index].y = y;
+    s->item[index].w = (int16_t)(w < 0 ? 0 : w);
+    s->item[index].h = (uint16_t)(h < 0 ? 0 : h > 65535 ? 65535 : h);
 }
 
+static void dl_text(surface_t *s, int x, int y, uint8_t font, uint16_t colour,
+                    const uint16_t *codes, unsigned count)
+{
+    ditem_t *it;
+
+    if (count == 0U) return;
+    if (s->codes + count > s->code_cap) {
+        uint32_t cap = s->code_cap ? s->code_cap * 2U : 8192U;
+        uint16_t *bigger;
+        while (cap < s->codes + count) cap *= 2U;
+        bigger = realloc(s->code, (size_t)cap * sizeof(uint16_t));
+        if (bigger == NULL) return;
+        s->code = bigger; s->code_cap = cap;
+    }
+    it = dl_new(s);
+    if (it == NULL) return;
+    it->kind = D_TEXT; it->font = font; it->colour = colour;
+    it->x = (int16_t)x; it->y = y;
+    it->h = (uint16_t)(onewww_fonts[font].ascent + onewww_fonts[font].descent + 2U);
+    it->count = (uint16_t)count; it->data = s->codes;
+    memcpy(&s->code[s->codes], codes, count * sizeof(uint16_t));
+    s->codes += count;
+}
+
+static void dl_image(surface_t *s, int x, int y, int w, int h, int image)
+{
+    ditem_t *it = dl_new(s);
+
+    if (it == NULL) return;
+    it->kind = D_IMAGE; it->data = (uint32_t)image;
+    it->x = (int16_t)x; it->y = y; it->w = (int16_t)w; it->h = (uint16_t)h;
+}
+
+static void surface_free(surface_t *s)
+{
+    free(s->item); free(s->code);
+    s->item = NULL; s->code = NULL;
+    s->items = s->cap = s->codes = s->code_cap = s->rows = 0U;
+}
+
+/* Thin lines: borders, rules, underlines. A line in the "ink of the row"
+ * is a grey between the paper behind it and the ink of the page. */
 static void hline(surface_t *s, int x0, int x1, int y, unsigned level,
                   uint16_t colour, uint16_t paper)
 {
-    const uint8_t *map = row_map(s, y, colour, paper);
-    if (map == NULL) return;
-    for (int x = x0; x < x1; x++) put640(s, x, y, line_value(map, level));
+    (void)dl_rect(s, x0, y, x1 - x0, 1,
+                  colour == INK_OF_ROW ? mix(paper, s->ink, (int)level, 3) : colour);
 }
 
 static void vline(surface_t *s, int x, int y0, int y1, unsigned level,
                   uint16_t paper)
 {
-    for (int y = y0; y < y1; y++) {
-        const uint8_t *map = row_map(s, y, INK_OF_ROW, paper);
-        if (map != NULL) put640(s, x, y, line_value(map, level));
-    }
-}
-
-/* A grey background of a word is drawn as a thin frame: it then needs no
- * colour of its own on the row, and the row keeps its colours for text.
- * Returns 2 for such a background, 1 for one that is as the paper
- * (nothing to draw), or 0 for a background with a colour, which is
- * filled. */
-static int back_pattern(uint16_t back, uint16_t paper, uint16_t ink)
-{
-    const int r = (back >> 8) & 15, g = (back >> 4) & 15, b = back & 15;
-    const int most = r > g ? (r > b ? r : b) : (g > b ? g : b);
-    const int least = r < g ? (r < b ? r : b) : (g < b ? g : b);
-    const int lp = (int)((paper >> 8) & 15) * 3 + (int)((paper >> 4) & 15) * 6 + (int)(paper & 15);
-    const int li = (int)((ink >> 8) & 15) * 3 + (int)((ink >> 4) & 15) * 6 + (int)(ink & 15);
-    const int lb = r * 3 + g * 6 + b;
-    int part;
-
-    if (most - least > 2 || li == lp) return 0;         /* it has a colour */
-    part = (lb - lp) * 100 / (li - lp);                 /* 0: paper, 100: ink */
-    if (part < 4) return 1;
-    return part < 45 ? 2 : 0;
-}
-
-/* Fills a part of a row with a colour: the background of a word. */
-static void fill_row(surface_t *s, int x0, int x1, int y, uint16_t colour,
-                     uint16_t paper)
-{
-    const uint8_t *map = row_map(s, y, colour, paper);
-    if (map == NULL) return;
-    for (int x = x0; x < x1; x++) put640(s, x, y, map[3]);
+    (void)dl_rect(s, x, y0, 1, y1 - y0, mix(paper, s->ink, (int)level, 3));
 }
 
 static const onewww_glyph_t *glyph_find(const onewww_font_t *f, uint16_t code)
@@ -278,31 +183,6 @@ static const onewww_glyph_t *glyph_find(const onewww_font_t *f, uint16_t code)
         return glyph_find(&onewww_fonts[ONEWWW_FONT_BODY], code);
     }
     return code == '?' ? &f->glyphs[0] : glyph_find(f, '?');
-}
-
-/* Set for text on a filled background: a soft edge would be a mix with
- * the paper of the row, which is not the colour behind the text. */
-static uint8_t s_hard_edges;
-
-static int glyph_draw(surface_t *s, const onewww_font_t *f, uint16_t code,
-                      int x, int top, uint16_t colour, uint16_t paper)
-{
-    const onewww_glyph_t *g = glyph_find(f, code);
-    const uint8_t *bits = f->bits + g->offset;
-    const unsigned stride = ((unsigned)g->w + 3U) >> 2;
-
-    for (unsigned gy = 0; gy < g->h; gy++) {
-        const int y = top + g->y + (int)gy;
-        const uint8_t *map = row_map(s, y, colour, paper);
-        if (map == NULL) continue;
-        for (unsigned gx = 0; gx < g->w; gx++) {
-            unsigned level =
-                (bits[gy * stride + (gx >> 2)] >> (6U - 2U * (gx & 3U))) & 3U;
-            if (s_hard_edges) level = level >= 2U ? 3U : 0U;
-            if (level != 0U) put640(s, x + g->x + (int)gx, y, map[level]);
-        }
-    }
-    return g->advance;
 }
 
 static int text_width(const onewww_font_t *f, const uint16_t *cp, unsigned n)
@@ -447,19 +327,24 @@ typedef struct {
     char *url;
     uint8_t *rgb;               /* w x h x 3, on the paper of the page */
     uint16_t w, h;              /* size of rgb */
+    uint8_t *scaled;            /* a copy at the size on the page */
+    uint16_t sw, sh;
     uint16_t natural_w, natural_h;
     uint8_t state;
 } image_t;
 
 static image_t s_img[IMG_MAX];
 static unsigned s_imgs;
-static size_t s_img_bytes;
+static size_t s_img_bytes, s_scaled_bytes;
+#define SCALED_BYTES (12U * 1024U * 1024U)  /* all copies for the screen */
 
 static void images_free(void)
 {
-    for (unsigned i = 0; i < s_imgs; i++) { free(s_img[i].url); free(s_img[i].rgb); }
+    for (unsigned i = 0; i < s_imgs; i++) {
+        free(s_img[i].url); free(s_img[i].rgb); free(s_img[i].scaled);
+    }
     memset(s_img, 0, sizeof(s_img));
-    s_imgs = 0U; s_img_bytes = 0U;
+    s_imgs = 0U; s_img_bytes = 0U; s_scaled_bytes = 0U;
 }
 
 static int image_find(const onewww_node_t *node)
@@ -487,9 +372,9 @@ static uint8_t *scale_rgb(const uint8_t *src, unsigned comps, unsigned w, unsign
                           unsigned tw, unsigned th)
 {
     uint8_t *out = malloc((size_t)tw * th * 3U);
-    const unsigned paper[3] = { ((s_pal[0].paper >> 8) & 15U) * 17U,
-                                ((s_pal[0].paper >> 4) & 15U) * 17U,
-                                (s_pal[0].paper & 15U) * 17U };
+    const unsigned paper[3] = { ((s_page.paper >> 8) & 15U) * 17U,
+                                ((s_page.paper >> 4) & 15U) * 17U,
+                                (s_page.paper & 15U) * 17U };
 
     if (out == NULL) return NULL;
     for (unsigned ty = 0; ty < th; ty++) {
@@ -548,196 +433,38 @@ void onewww_page_image_data(unsigned image, const uint8_t *rgba,
     im->state = IMG_LOADED;
 }
 
-static int luminance(const uint8_t *p)
+/* Draws a picture into `rows` rows of the frame, at its size on the
+ * page. The copy at that size is made at the first use and kept. */
+static void image_blit(uint32_t *frame, int rows, unsigned image,
+                       int x, int y, int w, int h)
 {
-    return (77 * p[0] + 150 * p[1] + 29 * p[2] + 128) >> 8;
-}
+    image_t *im;
 
-static int luminance12(uint16_t c)
-{
-    return (77 * (int)((c >> 8) & 15) + 150 * (int)((c >> 4) & 15) + 29 * (int)(c & 15)) * 17 >> 8;
-}
-
-/* A picture in text rows: the grey levels between the paper and the ink
- * of each row, with error diffusion. */
-static void draw_gray(surface_t *s, const image_t *im, int x, int y, int w, int h,
-                      uint16_t paper)
-{
-    uint8_t *rgb;
-    int16_t *err;
-
-    if (w <= 0 || h <= 0 || surface_need(s, (uint32_t)(y + h)) != 0) return;
-    rgb = scale_rgb(im->rgb, 3U, im->w, im->h, (unsigned)w, (unsigned)h);
-    err = calloc((size_t)(w + 2) * 2U, sizeof(int16_t));
-    if (rgb == NULL || err == NULL) { free(rgb); free(err); return; }
-    for (int ry = 0; ry < h; ry++) {
-        int16_t *cur = err + (ry & 1) * (w + 2), *next = err + ((ry + 1) & 1) * (w + 2);
-        const uint8_t *map = row_map(s, y + ry, INK_OF_ROW, paper);
-        const rowpal_t *p;
-        int lp, li, steps;
-
-        memset(next, 0, (size_t)(w + 2) * sizeof(int16_t));
-        if (map == NULL) continue;
-        p = &s_pal[s->pal[y + ry]];
-        lp = luminance12(p->paper); li = luminance12(p->ink);
-        steps = p->accent == OW_NO_COLOR ? 3 : p->third == OW_NO_COLOR ? 2 : 1;
-        if (li == lp) continue;
-        for (int rx = 0; rx < w; rx++) {
-            int level = luminance(rgb + ((size_t)ry * w + rx) * 3U) + cur[rx + 1] / 16;
-            int t = (level - lp) * 255 / (li - lp), q, shown, e;
-            if (t < 0) t = 0;
-            if (t > 255) t = 255;
-            q = (t * steps + 127) / 255;
-            shown = lp + (li - lp) * q / steps;
-            e = level - shown;
-            cur[rx + 2] = (int16_t)(cur[rx + 2] + e * 7);
-            next[rx] = (int16_t)(next[rx] + e * 3);
-            next[rx + 1] = (int16_t)(next[rx + 1] + e * 5);
-            next[rx + 2] = (int16_t)(next[rx + 2] + e);
-            /* Pixel values of paper .. ink: 0123, 012 or 01. */
-            put640(s, x + rx, y + ry, (uint8_t)q);
+    if (image >= s_imgs || w <= 0 || h <= 0) return;
+    im = &s_img[image];
+    if (im->rgb == NULL) return;
+    if (im->scaled == NULL || im->sw != (uint16_t)w || im->sh != (uint16_t)h) {
+        if (im->scaled != NULL) { s_scaled_bytes -= (size_t)im->sw * im->sh * 3U; free(im->scaled); }
+        im->scaled = NULL;
+        if (s_scaled_bytes + (size_t)w * (size_t)h * 3U > SCALED_BYTES) {
+            /* Make room: the copies of the other pictures can be made again. */
+            for (unsigned i = 0; i < s_imgs; i++) { free(s_img[i].scaled); s_img[i].scaled = NULL; }
+            s_scaled_bytes = 0U;
+        }
+        im->scaled = scale_rgb(im->rgb, 3U, im->w, im->h, (unsigned)w, (unsigned)h);
+        if (im->scaled == NULL) return;
+        im->sw = (uint16_t)w; im->sh = (uint16_t)h;
+        s_scaled_bytes += (size_t)w * (size_t)h * 3U;
+    }
+    for (int ry = y < 0 ? -y : 0; ry < h && y + ry < rows; ry++) {
+        const uint8_t *src = im->scaled + (size_t)ry * (size_t)w * 3U;
+        uint32_t *row = frame + (size_t)(y + ry) * PAGE_WIDTH;
+        for (int rx = 0; rx < w; rx++, src += 3) {
+            const int px = x + rx;
+            if (px < 0 || px >= PAGE_WIDTH) continue;
+            row[px] = 0xFF000000U | ((uint32_t)src[0] << 16) | ((uint32_t)src[1] << 8) | src[2];
         }
     }
-    free(rgb); free(err);
-}
-
-/* Sixteen colours for a picture: the paper and fifteen from a median cut
- * of its colours. lut gives the palette entry for each 12-bit colour. */
-static void quantize(const uint8_t *rgb, size_t pixels, uint16_t paper,
-                     uint16_t pal[16], uint8_t *lut)
-{
-    static uint32_t hist[4096];
-    struct { uint8_t lo[3], hi[3]; uint32_t count; } box[15];
-    int boxes = 1;
-
-    memset(hist, 0, sizeof(hist));
-    for (size_t i = 0; i < pixels; i++, rgb += 3) {
-        hist[((unsigned)(rgb[0] >> 4) << 8) | ((unsigned)(rgb[1] >> 4) << 4) | (rgb[2] >> 4)]++;
-    }
-    memset(box, 0, sizeof(box));
-    box[0].hi[0] = box[0].hi[1] = box[0].hi[2] = 15U;
-    box[0].count = (uint32_t)pixels;
-    while (boxes < 15) {
-        int pick = -1, axis = 0, range = 0;
-        uint32_t half = 0, sum = 0;
-        unsigned cut;
-        for (int i = 0; i < boxes; i++) {       /* the box with the most pixels */
-            int r = 0;
-            for (int k = 0; k < 3; k++) {
-                if (box[i].hi[k] - box[i].lo[k] > r) r = box[i].hi[k] - box[i].lo[k];
-            }
-            if (r > 0 && (pick < 0 || box[i].count > box[pick].count)) pick = i;
-        }
-        if (pick < 0) break;
-        for (int k = 0; k < 3; k++) {
-            if (box[pick].hi[k] - box[pick].lo[k] > range) {
-                range = box[pick].hi[k] - box[pick].lo[k]; axis = k;
-            }
-        }
-        half = box[pick].count / 2U;
-        for (cut = box[pick].lo[axis]; cut < box[pick].hi[axis]; cut++) {
-            unsigned c[3];
-            for (c[0] = box[pick].lo[0]; c[0] <= box[pick].hi[0]; c[0]++) {
-                for (c[1] = box[pick].lo[1]; c[1] <= box[pick].hi[1]; c[1]++) {
-                    for (c[2] = box[pick].lo[2]; c[2] <= box[pick].hi[2]; c[2]++) {
-                        if (c[axis] == cut) sum += hist[(c[0] << 8) | (c[1] << 4) | c[2]];
-                    }
-                }
-            }
-            if (sum >= half && sum != 0U) break;
-        }
-        if (cut >= box[pick].hi[axis]) cut = box[pick].hi[axis] - 1U;
-        box[boxes] = box[pick];
-        box[pick].hi[axis] = (uint8_t)cut;
-        box[boxes].lo[axis] = (uint8_t)(cut + 1U);
-        box[boxes].count = box[boxes].count > sum ? box[boxes].count - sum : 0U;
-        box[pick].count = sum;
-        boxes++;
-    }
-    pal[0] = paper;
-    for (int i = 0; i < 15; i++) {
-        uint32_t total = 0, sum[3] = { 0, 0, 0 };
-        unsigned c[3];
-        pal[i + 1] = paper;
-        if (i >= boxes) continue;
-        for (c[0] = box[i].lo[0]; c[0] <= box[i].hi[0]; c[0]++) {
-            for (c[1] = box[i].lo[1]; c[1] <= box[i].hi[1]; c[1]++) {
-                for (c[2] = box[i].lo[2]; c[2] <= box[i].hi[2]; c[2]++) {
-                    const uint32_t n = hist[(c[0] << 8) | (c[1] << 4) | c[2]];
-                    total += n; sum[0] += n * c[0]; sum[1] += n * c[1]; sum[2] += n * c[2];
-                }
-            }
-        }
-        if (total != 0U) {
-            pal[i + 1] = (uint16_t)((((sum[0] + total / 2U) / total) << 8) |
-                                    (((sum[1] + total / 2U) / total) << 4) |
-                                    ((sum[2] + total / 2U) / total));
-        }
-    }
-    for (unsigned c = 0; c < 4096U; c++) {
-        int best = 0, best_d = 1 << 30;
-        for (int i = 0; i < 16; i++) {
-            const int dr = (int)((c >> 8) & 15) - (int)((pal[i] >> 8) & 15);
-            const int dg = (int)((c >> 4) & 15) - (int)((pal[i] >> 4) & 15);
-            const int db = (int)(c & 15) - (int)(pal[i] & 15);
-            const int d = dr * dr * 3 + dg * dg * 4 + db * db * 2;
-            if (d < best_d) { best_d = d; best = i; }
-        }
-        lut[c] = (uint8_t)best;
-    }
-}
-
-/* A picture in rows of its own: 320 mode, sixteen colours. x and w are
- * screen pixels; the picture has w / 2 pixels in a row. */
-static void draw_band(surface_t *s, const image_t *im, int x, int y, int w, int h,
-                      uint16_t paper)
-{
-    static uint8_t lut[4096];
-    const int tw = w / 2, x320 = x / 2;
-    uint8_t *rgb;
-    int16_t *err;
-    uint16_t *pal;
-
-    if (tw <= 0 || h <= 0 || s_pics >= PIC_MAX ||
-        surface_need(s, (uint32_t)(y + h)) != 0) return;
-    rgb = scale_rgb(im->rgb, 3U, im->w, im->h, (unsigned)tw, (unsigned)h);
-    err = calloc((size_t)(tw + 2) * 6U, sizeof(int16_t));
-    if (rgb == NULL || err == NULL) { free(rgb); free(err); return; }
-    pal = s_pic[s_pics];
-    quantize(rgb, (size_t)tw * h, paper, pal, lut);
-    for (int ry = 0; ry < h; ry++) {
-        int16_t *cur = err + (ry & 1) * (tw + 2) * 3, *next = err + ((ry + 1) & 1) * (tw + 2) * 3;
-        uint8_t *row = s->px + (size_t)(y + ry) * ROW_BYTES;
-
-        memset(next, 0, (size_t)(tw + 2) * 3U * sizeof(int16_t));
-        memset(row, 0, ROW_BYTES);
-        s->scb[y + ry] = SCB_USED;                  /* 320 mode */
-        s->pal[y + ry] = (uint16_t)(PAL_PIC + s_pics);
-        for (int rx = 0; rx < tw; rx++) {
-            const uint8_t *p = rgb + ((size_t)ry * tw + rx) * 3U;
-            const int px = x320 + rx;
-            int c[3];
-            unsigned best;
-            for (int k = 0; k < 3; k++) {
-                c[k] = p[k] + cur[(rx + 1) * 3 + k] / 16;
-                if (c[k] < 0) c[k] = 0;
-                if (c[k] > 255) c[k] = 255;
-            }
-            best = lut[((unsigned)(c[0] >> 4) << 8) | ((unsigned)(c[1] >> 4) << 4) | (unsigned)(c[2] >> 4)];
-            for (int k = 0; k < 3; k++) {
-                const int q = c[k] - (int)((pal[best] >> (8 - 4 * k)) & 15) * 17;
-                cur[(rx + 2) * 3 + k] = (int16_t)(cur[(rx + 2) * 3 + k] + q * 7);
-                next[rx * 3 + k] = (int16_t)(next[rx * 3 + k] + q * 3);
-                next[(rx + 1) * 3 + k] = (int16_t)(next[(rx + 1) * 3 + k] + q * 5);
-                next[(rx + 2) * 3 + k] = (int16_t)(next[(rx + 2) * 3 + k] + q);
-            }
-            if (px < 0 || px >= 320) continue;
-            if ((px & 1) == 0) row[px >> 1] = (uint8_t)((row[px >> 1] & 0x0FU) | (best << 4));
-            else row[px >> 1] = (uint8_t)((row[px >> 1] & 0xF0U) | best);
-        }
-    }
-    s_pics++;
-    free(rgb); free(err);
 }
 
 /* ---- Inline layout ----------------------------------------------------- */
@@ -864,21 +591,6 @@ static void flow_flush(flow_t *f, int force)
     height = ascent + descent + 2;
     top = f->y + 1;
     f->gap = 0;
-    /* A picture that is alone on its line gets rows of its own: 320 mode
-     * with sixteen colours. Very small ones stay in the text rows. */
-    if (f->s != NULL && f->top_level && l->items == 1U && l->item[0].image >= 0 &&
-        l->item[0].w >= 48 && f->y >= f->fl_bottom && f->y >= f->fr_bottom &&
-        s_pics < PIC_MAX) {
-        const item_t *it = &l->item[0];
-        int x = f->x0 + left;
-        if (f->align == OW_ALIGN_CENTER) x += (avail - it->w) / 2;
-        else if (f->align == OW_ALIGN_RIGHT) x += avail - it->w;
-        draw_band(f->s, &s_img[it->image], x, f->y, it->w, (int)it->ih, f->paper);
-        if (it->link >= 0) rect_add(x, x + it->w, f->y, (int)it->ih, (uint32_t)it->link);
-        f->y += (int)it->ih; f->marker_len = 0U;
-        line_reset(l);
-        return;
-    }
     if (f->s == NULL || surface_need(f->s, (uint32_t)(f->y + height)) != 0) {
         f->y += height; f->marker_len = 0U;
         line_reset(l);
@@ -887,106 +599,31 @@ static void flow_flush(flow_t *f, int force)
     if (f->align == OW_ALIGN_CENTER) shift = (avail - l->width) / 2;
     else if (f->align == OW_ALIGN_RIGHT) shift = avail - l->width;
     if (shift < 0) shift = 0;
-    {
-        /* The rows of the line take the paper of the block. Their ink is
-         * the text colour that covers the most width. */
-        uint16_t colour[4], ink = s_pal[0].ink;
-        int width[4], colours = 0, best = -1;
-        for (unsigned i = 0; i < l->items; i++) {
-            int k = 0;
-            if (l->item[i].image >= 0) continue;    /* a picture has no text colour */
-            if (l->item[i].back != OW_NO_COLOR) continue;   /* text on its own paper */
-            while (k < colours && colour[k] != l->item[i].colour) k++;
-            if (k == colours) {
-                if (colours == 4) continue;
-                colour[colours] = l->item[i].colour; width[colours++] = 0;
-            }
-            width[k] += l->item[i].w;
-        }
-        for (int k = 0; k < colours; k++) {
-            if (best < 0 || width[k] > width[best]) best = k;
-        }
-        if (best >= 0) ink = colour[best];
-        for (int y = f->y; y < f->y + height; y++) {
-            row_claim(f->s, y, f->paper, readable(ink, f->paper));
-        }
-    }
-    if (f->marker_len != 0U) {
+    if (f->marker_len != 0U && left >= 14) {
         const onewww_font_t *font = &onewww_fonts[ONEWWW_FONT_BODY];
-        int x = f->x0 + left - 6 - text_width(font, f->marker, f->marker_len);
-        for (unsigned k = 0; k < f->marker_len && left >= 14; k++) {
-            x += glyph_draw(f->s, font, f->marker[k], x, top + ascent - font->ascent,
-                            readable(f->marker_colour, f->paper), f->paper);
-        }
-        f->marker_len = 0U;
+        dl_text(f->s, f->x0 + left - 6 - text_width(font, f->marker, f->marker_len),
+                top + ascent - font->ascent, ONEWWW_FONT_BODY,
+                readable(f->marker_colour, f->paper), f->marker, f->marker_len);
     }
-    /* First give the rows all the colours of the line and fill the
-     * backgrounds. A new colour changes the form of a row; when that
-     * occurs after some words are drawn, those words and the later ones
-     * get different letter edges. */
-    for (unsigned i = 0; i < l->items; i++) {
-        const item_t *it = &l->item[i];
-        const int x_start = f->x0 + left + shift + it->x;
-
-        if (it->image >= 0) continue;
-        if (it->back != OW_NO_COLOR &&
-            back_pattern(it->back, f->paper, s_pal[0].ink) == 0) {
-            uint16_t colour = readable(it->colour, it->back);
-            for (int y = f->y; y < f->y + height; y++) {
-                fill_row(f->s, x_start - 3, x_start + it->w + 3, y, it->back, f->paper);
-                if (color_distance(colour, f->paper) > 6) (void)row_map(f->s, y, colour, f->paper);
-            }
-        } else {
-            for (int y = f->y; y < f->y + height; y++) {
-                (void)row_map(f->s, y, readable(it->colour, f->paper), f->paper);
-            }
-        }
-    }
+    f->marker_len = 0U;
     for (unsigned i = 0; i < l->items; i++) {
         const item_t *it = &l->item[i];
         const onewww_font_t *font = &onewww_fonts[it->font];
         const int x_start = f->x0 + left + shift + it->x;
         uint16_t colour = readable(it->colour, f->paper);
-        int x = x_start;
 
-        if (it->back != OW_NO_COLOR && it->image < 0) {
-            const int step = back_pattern(it->back, f->paper, s_pal[0].ink);
-            if (step == 0) {
-                /* A word on its background (filled above). Text in a colour
-                 * near to the page paper is cut out of the fill. */
-                colour = readable(it->colour, it->back);
-                if (color_distance(colour, f->paper) <= 6) colour = f->paper;
-                s_hard_edges = 1U;
-            } else if (step > 1) {
-                /* A frame. The words of one run share it: no line between
-                 * a word and the next one of the same run. */
-                const int joins_left = i > 0U && l->item[i - 1U].back == it->back &&
-                                       l->item[i - 1U].link == it->link &&
-                                       l->item[i - 1U].image < 0;
-                const int joins_right = i + 1U < l->items && l->item[i + 1U].back == it->back &&
-                                        l->item[i + 1U].link == it->link &&
-                                        l->item[i + 1U].image < 0;
-                const int x0 = x_start - (joins_left ? 0 : 3);
-                const int x1 = joins_right ? f->x0 + left + shift + l->item[i + 1U].x :
-                                             x_start + it->w + 3;
-                hline(f->s, x0, x1, f->y + 1, LV_LIGHT, INK_OF_ROW, f->paper);
-                hline(f->s, x0, x1, f->y + height - 1, LV_LIGHT, INK_OF_ROW, f->paper);
-                if (!joins_left) vline(f->s, x0, f->y + 1, f->y + height, LV_LIGHT, f->paper);
-                if (!joins_right) vline(f->s, x1 - 1, f->y + 1, f->y + height, LV_LIGHT, f->paper);
-            }
-        }
         if (it->image >= 0) {
-            draw_gray(f->s, &s_img[it->image], x_start, top + ascent - (int)it->ih,
-                      it->w, (int)it->ih, f->paper);
-        }
-        for (unsigned k = 0; k < it->count; k++) {
-            x += glyph_draw(f->s, font, l->cp[it->start + k], x,
-                            top + ascent - font->ascent, colour, f->paper);
-        }
-        s_hard_edges = 0U;
-        if (it->underline) {
-            hline(f->s, x_start, x_start + it->w, top + ascent + 2, LV_INK,
-                  colour, f->paper);
+            dl_image(f->s, x_start, top + ascent - (int)it->ih, it->w, (int)it->ih, it->image);
+        } else {
+            if (it->back != OW_NO_COLOR) {      /* a word on its own paper */
+                (void)dl_rect(f->s, x_start - 3, f->y, it->w + 6, height, it->back);
+                colour = readable(it->colour, it->back);
+            }
+            dl_text(f->s, x_start, top + ascent - font->ascent, it->font, colour,
+                    &l->cp[it->start], it->count);
+            if (it->underline) {
+                (void)dl_rect(f->s, x_start, top + ascent + 2, it->w, 1, colour);
+            }
         }
         if (it->link >= 0) {
             rect_add(x_start, x_start + it->w, f->y, height, (uint32_t)it->link);
@@ -1139,6 +776,11 @@ static void flow_break(flow_t *f, const text_t *tx, int gap)
 
 /* ---- Picture ----------------------------------------------------------- */
 
+static const uint16_t s_picture_palette[16] = {
+    0x0000, 0x0113, 0x0226, 0x034A, 0x047D, 0x07AF, 0x0FFF, 0x0FE8,
+    0x0FB3, 0x0F71, 0x0C32, 0x0713, 0x0141, 0x0272, 0x04A4, 0x0888,
+};
+
 static void picture_rgb(int x, int y, int h, int *r, int *g, int *b)
 {
     /* x is 0..319 (two screen pixels each), y is 0..h-1. */
@@ -1167,59 +809,34 @@ static void picture_rgb(int x, int y, int h, int *r, int *g, int *b)
     }
 }
 
-static void flow_picture(flow_t *f, int h)
+/* Makes the built-in picture of the home page. Returns its number. */
+static int builtin_image(const onewww_node_t *n)
 {
-    static int16_t err[2][322][3];
-    surface_t *s = f->s;
-    const int y0 = f->y;
+    const int w = 320, h = 120;
+    image_t *im;
 
-    if (s == NULL || s_pics >= PIC_MAX || surface_need(s, (uint32_t)(y0 + h)) != 0) return;
-    memcpy(s_pic[s_pics], s_picture_palette, sizeof(s_pic[0]));
-    memset(err, 0, sizeof(err));
+    if (s_imgs == IMG_MAX) return -1;
+    im = &s_img[s_imgs];
+    im->rgb = malloc((size_t)w * h * 3U);
+    if (im->rgb == NULL) return -1;
     for (int y = 0; y < h; y++) {
-        int16_t (*cur)[3] = err[y & 1], (*next)[3] = err[(y + 1) & 1];
-        uint8_t *row = s->px + (size_t)(y0 + y) * ROW_BYTES;
-
-        memset(next, 0, sizeof(err[0]));
-        s->scb[y0 + y] = SCB_USED;      /* 320 mode */
-        s->pal[y0 + y] = (uint16_t)(PAL_PIC + s_pics);
-        for (int x = 0; x < 320; x++) {
-            int c[3], best = 0, best_d = 1 << 30;
-
-            picture_rgb(x, y, h, &c[0], &c[1], &c[2]);
-            for (int k = 0; k < 3; k++) {
-                c[k] += cur[x + 1][k] / 16;
-                if (c[k] < 0) c[k] = 0;
-                if (c[k] > 255) c[k] = 255;
-            }
-            for (int i = 0; i < 16; i++) {
-                const uint16_t p = s_picture_palette[i];
-                const int dr = c[0] - ((p >> 8) & 15) * 17;
-                const int dg = c[1] - ((p >> 4) & 15) * 17;
-                const int db = c[2] - (p & 15) * 17;
-                const int d = dr * dr * 3 + dg * dg * 4 + db * db * 2;
-                if (d < best_d) { best_d = d; best = i; }
-            }
-            for (int k = 0; k < 3; k++) {
-                const uint16_t p = s_picture_palette[best];
-                const int q = c[k] - ((p >> (8 - 4 * k)) & 15) * 17;
-                cur[x + 2][k] = (int16_t)(cur[x + 2][k] + q * 7);
-                next[x][k] = (int16_t)(next[x][k] + q * 3);
-                next[x + 1][k] = (int16_t)(next[x + 1][k] + q * 5);
-                next[x + 2][k] = (int16_t)(next[x + 2][k] + q);
-            }
-            if ((x & 1) == 0) row[x >> 1] = (uint8_t)(best << 4);
-            else row[x >> 1] |= (uint8_t)best;
+        for (int x = 0; x < w; x++) {
+            int r, g, b;
+            picture_rgb(x, y, h, &r, &g, &b);
+            im->rgb[(y * w + x) * 3] = (uint8_t)(r < 0 ? 0 : r > 255 ? 255 : r);
+            im->rgb[(y * w + x) * 3 + 1] = (uint8_t)(g < 0 ? 0 : g > 255 ? 255 : g);
+            im->rgb[(y * w + x) * 3 + 2] = (uint8_t)(b < 0 ? 0 : b > 255 ? 255 : b);
         }
     }
-    s_pics++;
-    f->y += h;
+    im->node = n; im->w = (uint16_t)w; im->h = (uint16_t)h;
+    im->natural_w = 616U; im->natural_h = 231U;
+    im->state = IMG_LOADED;
+    return (int)s_imgs++;
 }
 
 /* ---- Form fields ------------------------------------------------------- */
 
 static const doc_t *view_doc(void);
-static uint16_t mix(uint16_t a, uint16_t b, int part, int of);
 
 #define FIELD_MAX      256U
 #define FIELD_TEXT_MAX 512U
@@ -1661,14 +1278,6 @@ static void set_marker(flow_t *f, const text_t *tx)
     }
 }
 
-/* Gives the rows of a block that have no text the paper of the block. */
-static void paper_rows(flow_t *f, int y0, int y1, uint16_t ink)
-{
-    if (f->s == NULL) return;
-    (void)surface_need(f->s, (uint32_t)y1);
-    for (int y = y0; y < y1; y++) row_claim(f->s, y, f->paper, readable(ink, f->paper));
-}
-
 /* A block: margins, padding, alignment and paper around its content. */
 static void walk_block(flow_t *f, const onewww_node_t *n, text_t tx,
                        const text_t *before)
@@ -1677,7 +1286,7 @@ static void walk_block(flow_t *f, const onewww_node_t *n, text_t tx,
     const int indent = f->indent, right = f->right;
     const uint8_t align = f->align;
     const uint16_t paper = f->paper;
-    int y0, edge0, edge1;
+    int y0, edge0, edge1, box = -1;
 
     flow_break(f, before, cs->margin_top);
     if (cs->clear != 0U) floats_clear(f, cs->clear);
@@ -1709,7 +1318,12 @@ static void walk_block(flow_t *f, const onewww_node_t *n, text_t tx,
         edge0 = f->x0 + indent; edge1 = f->x0 + f->w - right;
     }
     f->align = cs->align;
-    if (cs->background != OW_NO_COLOR) f->paper = cs->background;
+    if (cs->background != OW_NO_COLOR) {
+        /* The box goes into the list before the content; its height is
+         * known at the end. */
+        f->paper = cs->background;
+        if (f->s != NULL) box = dl_rect(f->s, edge0, y0, edge1 - edge0, 0, cs->background);
+    }
     if (cs->border & OW_SIDE_TOP) { f->y += 2; f->gap = 0; }
     if (cs->padding_top != 0) { f->y += cs->padding_top; f->gap = 0; }
     if (cs->display == OW_D_LIST_ITEM && !cs->list_none) set_marker(f, &tx);
@@ -1726,7 +1340,10 @@ static void walk_block(flow_t *f, const onewww_node_t *n, text_t tx,
     f->marker_len = 0U;
     if (cs->padding_bottom != 0) { f->y += cs->padding_bottom; f->gap = 0; }
     if (cs->border & OW_SIDE_BOTTOM) { f->y += 2; f->gap = 0; }
-    if (cs->background != OW_NO_COLOR) paper_rows(f, y0, f->y, tx.colour);
+    if (box >= 0) {
+        (void)surface_need(f->s, (uint32_t)f->y);
+        dl_box(f->s, box, edge0, y0, edge1 - edge0, f->y - y0);
+    }
     if (cs->border != 0U && f->s != NULL && surface_need(f->s, (uint32_t)f->y) == 0 &&
         f->y > y0) {
         if (cs->border & OW_SIDE_TOP) hline(f->s, edge0, edge1, y0, LV_LIGHT, INK_OF_ROW, f->paper);
@@ -1745,8 +1362,12 @@ static int image_for(flow_t *f, const onewww_node_t *n)
     static char src[HTTP_URL_MAX], url[HTTP_URL_MAX];
     int image = image_find(n);
 
-    if (image >= 0 || f->s == NULL || s_imgs == IMG_MAX || s_doc.base == NULL ||
-        n->length == 0U) return image;
+    if (image >= 0 || f->s == NULL || s_imgs == IMG_MAX || n->length == 0U) return image;
+    if (s_doc.internal) {               /* the home page has one picture */
+        return onewww_attr(n, "src", src, sizeof(src)) > 0 && strcmp(src, "builtin") == 0 ?
+               builtin_image(n) : -1;
+    }
+    if (s_doc.base == NULL) return -1;
     if (onewww_attr(n, "src", src, sizeof(src)) <= 0 || strncmp(src, "data:", 5U) == 0) {
         /* A page that loads its pictures late keeps the address here. */
         if (onewww_attr(n, "data-src", src, sizeof(src)) <= 0) return -1;
@@ -1927,15 +1548,6 @@ static void walk_node(flow_t *f, const onewww_node_t *n, text_t tx)
         flow_break(f, &tx, 6);
         return;
     case OW_IMG:
-        if (s_doc.internal && f->top_level && f->s != NULL &&
-            onewww_attr(n, "src", text, sizeof(text)) > 0 &&
-            strcmp(text, "builtin") == 0) {
-            flow_break(f, &tx, 8);
-            flow_picture(f, 120);
-            f->gap = 0;
-            flow_break(f, &tx, 8);
-            return;
-        }
         {
             int w, h;
             const int image = image_for(f, n);
@@ -2266,8 +1878,8 @@ static void walk_table(flow_t *f, const onewww_node_t *table)
     for (row = row_next(table, NULL); row != NULL; row = row_next(table, row)) {
         int bottom = y + 2 * CELL_PAD;
         int edge[MAX_COLS + 1], edges = 0;
-        uint16_t row_paper = row->style != NULL ? row->style->background : OW_NO_COLOR;
-        uint16_t row_ink = 0x0000;
+        const uint16_t row_paper = row->style != NULL ? row->style->background : OW_NO_COLOR;
+        int box[MAX_COLS + 1], boxes = 0;
 
         if (s_abort || surface_need(f->s, (uint32_t)bottom) != 0) break;
         for (c = row->first; c != NULL; c = c->next) {
@@ -2279,21 +1891,20 @@ static void walk_table(flow_t *f, const onewww_node_t *table)
             if (start < 0 || start >= columns) break;
             for (int i = 0; i < start; i++) cx += width[i];
             for (int i = 0; i < span && start + i < columns; i++) cw += width[start + i];
+            if (c->style->background != OW_NO_COLOR || row_paper != OW_NO_COLOR) {
+                box[boxes] = dl_rect(f->s, cx, y, cw, 0, c->style->background != OW_NO_COLOR ?
+                                     c->style->background : row_paper);
+                if (boxes < MAX_COLS) boxes++;
+            }
             cy = cell_run(f, c, f->s, cx + CELL_PAD, cw - 2 * CELL_PAD,
                           y + CELL_PAD / 2 + 1, NULL, NULL);
             if (cy + CELL_PAD / 2 + 1 > bottom) bottom = cy + CELL_PAD / 2 + 1;
             if (edges <= MAX_COLS) edge[edges++] = cx;
-            if (row_paper == OW_NO_COLOR && c->style->background != OW_NO_COLOR) {
-                row_paper = c->style->background; row_ink = c->style->color;
-            }
         }
         (void)grid_row_end(&grid);
         if (surface_need(f->s, (uint32_t)bottom + 1U) != 0) break;
-        if (row_paper != OW_NO_COLOR) {
-            const uint16_t paper = f->paper;        /* rows without text */
-            f->paper = row_paper;
-            paper_rows(f, y, bottom, row_ink);
-            f->paper = paper;
+        for (int i = 0; i < boxes; i++) {           /* the cells are as high as the row */
+            if (box[i] >= 0) f->s->item[box[i]].h = (uint16_t)(bottom - y);
         }
         if (border) {
             hline(f->s, x0, x0 + total + 1, y, LV_LIGHT, INK_OF_ROW, f->paper);
@@ -2326,15 +1937,11 @@ static struct {
     uint16_t paper, ink;                /* of the page */
 } s_work;
 
-/* While a page is laid out again (its pictures came), the screen shows
- * the layout before: the front copy. */
+/* While a page is laid out again (a picture came, a field changed), the
+ * screen shows the layout before: the front copy. */
 static struct {
     surface_t page;
     doc_t doc;
-    rowpal_t pal[PAL_MAX];
-    uint32_t pals;
-    uint16_t pic[PIC_MAX][16];
-    unsigned pics;
     uint8_t valid;
 } s_front;
 
@@ -2347,16 +1954,10 @@ static void sheets_free(void)
     s_work.sheets = 0U;
 }
 
-static void live_reset(void)
-{
-    s_pals = 1U; s_pics = 0U;
-    s_pal[0].paper = s_work.paper; s_pal[0].ink = s_work.ink; s_pal[0].accent = OW_NO_COLOR;
-}
-
 static void front_drop(void)
 {
     if (!s_front.valid) return;
-    free(s_front.page.px); free(s_front.page.scb); free(s_front.page.pal);
+    surface_free(&s_front.page);
     doc_lists_free(&s_front.doc);
     s_front.valid = 0U;
 }
@@ -2367,37 +1968,28 @@ static void front_take(void)
     front_drop();
     s_front.page = s_page;
     s_front.doc = s_doc;
-    memcpy(s_front.pal, s_pal, sizeof(rowpal_t) * s_pals);
-    s_front.pals = s_pals;
-    memcpy(s_front.pic, s_pic, sizeof(s_pic[0]) * s_pics);
-    s_front.pics = s_pics;
     s_front.valid = 1U;
     memset(&s_page, 0, sizeof(s_page));
+    s_page.paper = s_work.paper; s_page.ink = s_work.ink;
     s_doc.href = NULL; s_doc.link_row = NULL; s_doc.rect = NULL; s_doc.anchor = NULL;
     s_doc.links = s_doc.links_cap = s_doc.rects = s_doc.rects_cap = 0U;
     s_doc.anchors = s_doc.anchors_cap = 0U;
-    live_reset();
 }
 
 /* A new layout stopped: the front copy is the page again. */
 static void front_restore(void)
 {
-    free(s_page.px); free(s_page.scb); free(s_page.pal);
+    surface_free(&s_page);
     doc_lists_free(&s_doc);
     s_page = s_front.page;
     s_doc = s_front.doc;
-    memcpy(s_pal, s_front.pal, sizeof(rowpal_t) * s_front.pals);
-    s_pals = s_front.pals;
-    memcpy(s_pic, s_front.pic, sizeof(s_pic[0]) * s_front.pics);
-    s_pics = s_front.pics;
     s_front.valid = 0U;
 }
 
 void onewww_page_free(void)
 {
     front_drop();
-    free(s_page.px); free(s_page.scb); free(s_page.pal);
-    memset(&s_page, 0, sizeof(s_page));
+    surface_free(&s_page);
     doc_lists_free(&s_doc);
     memset(&s_doc, 0, sizeof(s_doc));
     sheets_free();
@@ -2406,7 +1998,7 @@ void onewww_page_free(void)
     if (s_work.dom != NULL) onewww_dom_free(s_work.dom);
     memset(&s_work, 0, sizeof(s_work));
     s_work.paper = 0x0FFF;
-    live_reset();
+    s_page.paper = 0x0FFF; s_page.ink = 0x0000;
 }
 
 /* Finds the style sheets of the page, in document order. */
@@ -2528,19 +2120,17 @@ int onewww_page_layout(void)
     } else {
         result = styles_apply();
         if (result != 0) { s_abort = 0U; onewww_page_free(); return result; }
-        live_reset();
+        s_page.paper = s_work.paper; s_page.ink = s_work.ink;
     }
     line = malloc(sizeof(*line));
-    if (line == NULL || surface_need(&s_page, ROW_CHUNK) != 0) {
-        free(line);
+    if (line == NULL) {
         if (again) front_restore(); else onewww_page_free();
         return -1;
     }
-    s_page.rows = 0U;
     memset(&f, 0, sizeof(f));
     memset(line, 0, sizeof(*line));
     f.s = &s_page; f.line = line; f.x0 = MARGIN; f.w = PAGE_WIDTH - 2 * MARGIN;
-    f.top_level = 1U; f.gap = NO_GAP; f.paper = s_pal[0].paper;
+    f.top_level = 1U; f.gap = NO_GAP; f.paper = s_page.paper;
     walk_node(&f, onewww_dom_root(s_work.dom), s_plain);
     flow_break(&f, &s_plain, 0);
     floats_clear(&f, OW_SIDE_LEFT | OW_SIDE_RIGHT);
@@ -2623,10 +2213,69 @@ int onewww_anchor_row(const char *name)
     return -1;
 }
 
+/* ---- Drawing ----------------------------------------------------------- */
+
 #define STATUS_PAPER 0x0DDD
 
-static int status_text(surface_t *s, const char *text, int x, int limit,
-                       int draw)
+static uint32_t pixel_of(uint16_t c)
+{
+    return 0xFF000000U | (((c >> 8) & 15U) * 17U << 16) | (((c >> 4) & 15U) * 17U << 8) |
+           ((c & 15U) * 17U);
+}
+
+/* Draws a character into `rows` rows of the picture. A pixel that the
+ * letter covers in part is a mix with the colour that is there: smooth
+ * edges on any background. Returns the advance. */
+static int frame_glyph(uint32_t *frame, int rows, const onewww_font_t *f,
+                       uint16_t code, int x, int top, uint32_t colour)
+{
+    const onewww_glyph_t *g = glyph_find(f, code);
+    const uint8_t *bits = f->bits + g->offset;
+    const unsigned stride = ((unsigned)g->w + 3U) >> 2;
+    const uint32_t cr = (colour >> 16) & 255U, cg = (colour >> 8) & 255U, cb = colour & 255U;
+
+    for (unsigned gy = 0; gy < g->h; gy++) {
+        const int y = top + g->y + (int)gy;
+        if (y < 0 || y >= rows) continue;
+        for (unsigned gx = 0; gx < g->w; gx++) {
+            const unsigned level =
+                (bits[gy * stride + (gx >> 2)] >> (6U - 2U * (gx & 3U))) & 3U;
+            const int px = x + g->x + (int)gx;
+            uint32_t *dst;
+            if (level == 0U || px < 0 || px >= PAGE_WIDTH) continue;
+            dst = &frame[y * PAGE_WIDTH + px];
+            if (level == 3U) *dst = colour;
+            else {
+                const uint32_t d = *dst;
+                const uint32_t r = (d >> 16) & 255U, gr = (d >> 8) & 255U, b = d & 255U;
+                const int n = (int)level;
+                *dst = 0xFF000000U |
+                       (uint32_t)((int)r + ((int)cr - (int)r) * n / 3) << 16 |
+                       (uint32_t)((int)gr + ((int)cg - (int)gr) * n / 3) << 8 |
+                       (uint32_t)((int)b + ((int)cb - (int)b) * n / 3);
+            }
+        }
+    }
+    return g->advance;
+}
+
+static void frame_rect(uint32_t *frame, int rows, int x, int y, int w, int h,
+                       uint32_t colour)
+{
+    int x1 = x + w, y1 = y + h;
+
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x1 > PAGE_WIDTH) x1 = PAGE_WIDTH;
+    if (y1 > rows) y1 = rows;
+    for (; y < y1; y++) {
+        uint32_t *row = frame + y * PAGE_WIDTH;
+        for (int px = x; px < x1; px++) row[px] = colour;
+    }
+}
+
+static int frame_text(uint32_t *frame, int rows, const char *text, int x,
+                      int y, int limit, uint32_t colour, int draw)
 {
     const onewww_font_t *font = &onewww_fonts[ONEWWW_FONT_SMALL];
     const unsigned char *p = (const unsigned char *)text;
@@ -2641,41 +2290,13 @@ static int status_text(surface_t *s, const char *text, int x, int limit,
         if (code > 0xFFFFU) code = '?';
         advance = glyph_find(font, (uint16_t)code)->advance;
         if (x + advance > limit) {
-            if (draw) (void)glyph_draw(s, font, 0x2026, x, 2, 0x0000, STATUS_PAPER);
+            if (draw) (void)frame_glyph(frame, rows, font, 0x2026, x, y, colour);
             break;
         }
-        if (draw) (void)glyph_draw(s, font, (uint16_t)code, x, 2, 0x0000, STATUS_PAPER);
+        if (draw) (void)frame_glyph(frame, rows, font, (uint16_t)code, x, y, colour);
         x += advance;
     }
     return x;
-}
-
-static void status_draw(const char *left, const char *right)
-{
-    surface_t s = { s_status_px, s_status_scb, s_status_pal,
-                    ONEWWW_STATUS_ROWS, ONEWWW_STATUS_ROWS, 1U };
-    int right_x = PAGE_WIDTH - 6;
-
-    memset(s_status_px, 0, sizeof(s_status_px));
-    memset(s_status_scb, SCB_640 | SCB_USED, sizeof(s_status_scb));
-    for (unsigned y = 0; y < ONEWWW_STATUS_ROWS; y++) s_status_pal[y] = PAL_STATUS;
-    hline(&s, 0, PAGE_WIDTH, 0, LV_DARK, 0x0000, STATUS_PAPER);
-    if (right != NULL && right[0] != '\0') {
-        right_x -= status_text(&s, right, 0, PAGE_WIDTH, 0);
-        (void)status_text(&s, right, right_x, PAGE_WIDTH, 1);
-        right_x -= 12;
-    }
-    (void)status_text(&s, left, 6, right_x - 8, 1);
-}
-
-static uint16_t mix(uint16_t a, uint16_t b, int part, int of)
-{
-    uint16_t out = 0;
-    for (int shift = 0; shift <= 8; shift += 4) {
-        const int ca = (a >> shift) & 15, cb = (b >> shift) & 15;
-        out |= (uint16_t)(((ca * (of - part) + cb * part + of / 2) / of) << shift);
-    }
-    return out;
 }
 
 /* An arrow: 'X' is ink, '.' is paper. */
@@ -2688,169 +2309,64 @@ static const char *const s_pointer[] = {
 
 void onewww_compose(uint32_t top, const char *left, const char *right,
                     int selected, int pointer_x, int pointer_y,
-                    uint8_t *fields)
+                    uint32_t *frame)
 {
-    static const uint8_t magic[4] = { 0xD3, 0xC8, 0xD2, 0xB4 };  /* SHR4 */
-    static const rowpal_t status_pal = { STATUS_PAPER, 0x0000, OW_NO_COLOR, OW_NO_COLOR };
-    /* row_ink: the pixel value of the ink of each row (3, 2 or 1). */
-    static uint8_t row_scb[ONEWWW_VIEW_ROWS], row_ink[ONEWWW_VIEW_ROWS];
-    static uint16_t row_pal[ONEWWW_VIEW_ROWS];
     const surface_t *page = view_page();
     const doc_t *doc = view_doc();
-    const rowpal_t *pals = s_front.valid ? s_front.pal : s_pal;
-    const uint16_t (*pics)[16] = s_front.valid ? s_front.pic : s_pic;
-    uint16_t slot_pal[2][16];
-    uint8_t slots[2] = { 0U, 0U };
+    const int view = (int)ONEWWW_PAGE_VIEW;
+    const int32_t first = (int32_t)top, last = (int32_t)top + view;
+    uint32_t *status = frame + (size_t)view * PAGE_WIDTH;
+    int right_x = PAGE_WIDTH - 6;
 
-    memset(fields, 0, ONEWWW_FIELDS_BYTES);
-    status_draw(left, right);
-    for (uint32_t r = 0; r < ONEWWW_VIEW_ROWS; r++) {
-        const uint32_t field = r & 1U, line = r >> 1;
-        uint8_t *base = fields + field * ONEWWW_FIELD_BYTES;
-        const uint8_t *px = NULL;
-        const rowpal_t *p;
-        uint8_t scb = SCB_640;
-        uint16_t pal = 0U;
-        unsigned slot;
+    frame_rect(frame, view, 0, 0, PAGE_WIDTH, view, pixel_of(page->paper));
+    for (uint32_t i = 0; i < page->items; i++) {
+        const ditem_t *it = &page->item[i];
+        const int y = (int)(it->y - first);
 
-        if (r >= ONEWWW_PAGE_VIEW) {
-            const uint32_t sr = r - ONEWWW_PAGE_VIEW;
-            px = s_status_px + sr * ROW_BYTES;
-            scb = s_status_scb[sr]; pal = s_status_pal[sr];
-        } else if (top + r < page->rows) {
-            px = page->px + (size_t)(top + r) * ROW_BYTES;
-            scb = page->scb[top + r]; pal = page->pal[top + r];
+        if (it->y >= last || it->y + (int32_t)it->h <= first) continue;
+        if (it->kind == D_RECT) {
+            frame_rect(frame, view, it->x, y, it->w, it->h, pixel_of(it->colour));
+        } else if (it->kind == D_TEXT) {
+            const onewww_font_t *font = &onewww_fonts[it->font];
+            const uint32_t colour = pixel_of(it->colour);
+            int x = it->x;
+            for (unsigned k = 0; k < it->count; k++) {
+                x += frame_glyph(frame, view, font, page->code[it->data + k], x, y, colour);
+            }
+        } else {
+            image_blit(frame, view, (unsigned)it->data, it->x, y, it->w, it->h);
         }
-        scb &= SCB_640;
-        p = pal == PAL_STATUS ? &status_pal : pal < PAL_PIC ? &pals[pal] : NULL;
-        row_scb[r] = scb; row_pal[r] = pal;
-        row_ink[r] = p == NULL || p->accent == OW_NO_COLOR ? 3U :
-                     p->third == OW_NO_COLOR ? 2U : 1U;
-        if (px != NULL) memcpy(base + line * ROW_BYTES, px, ROW_BYTES);
-        for (slot = 0; slot < slots[field] && slot_pal[field][slot] != pal; slot++) {}
-        if (slot == slots[field] && slots[field] == 16U) {
-            /* All 16 palettes of this field are in use: take the nearest. */
-            int best_d = 1 << 30;
-            slot = 0U;
-            for (unsigned i = 0; i < 16U && p != NULL; i++) {
-                const uint16_t other = slot_pal[field][i];
-                const rowpal_t *o = other == PAL_STATUS ? &status_pal :
-                                    other < PAL_PIC ? &pals[other] : NULL;
-                int d;
-                if (o == NULL) continue;
-                d = color_distance(o->paper, p->paper) * 4 + color_distance(o->ink, p->ink) +
-                    ((o->accent != OW_NO_COLOR) != (p->accent != OW_NO_COLOR) ? 40 : 0) +
-                    ((o->third != OW_NO_COLOR) != (p->third != OW_NO_COLOR) ? 40 : 0);
-                if (d < best_d) { best_d = d; slot = i; }
-            }
-        } else if (slot == slots[field]) {
-            uint8_t *entry = base + 0x7E00U + (uint32_t)slot * 32U;
-            uint16_t four[4] = { 0, 0, 0, 0 };
-            slot_pal[field][slots[field]++] = pal;
-            if (p != NULL) {
-                four[0] = p->paper;
-                if (p->accent == OW_NO_COLOR) {
-                    four[1] = mix(p->paper, p->ink, 1, 3);
-                    four[2] = mix(p->paper, p->ink, 2, 3);
-                    four[3] = p->ink;
-                } else if (p->third == OW_NO_COLOR) {
-                    four[1] = mix(p->paper, p->ink, 1, 2);
-                    four[2] = p->ink;
-                    four[3] = p->accent;
-                } else {
-                    four[1] = p->ink;
-                    four[2] = p->accent;
-                    four[3] = p->third;
-                }
-            }
-            for (unsigned i = 0; i < 16U; i++) {
-                const uint16_t c = p == NULL ? pics[pal - PAL_PIC][i] : four[i & 3U];
-                entry[2U * i] = (uint8_t)c;
-                entry[2U * i + 1U] = (uint8_t)(c >> 8);
-            }
-        }
-        base[0x7D00U + line] = (uint8_t)(scb | slot);
     }
-    /* The selected link: paper and its text colour change places. */
+    /* The selected link: its colours turn round. */
     for (uint32_t i = 0; selected >= 0 && i < doc->rects; i++) {
         const rect_t *rc = &doc->rect[i];
-        if (rc->link != (uint32_t)selected || rc->y + rc->h <= top ||
-            rc->y >= top + ONEWWW_PAGE_VIEW) continue;
-        for (uint32_t y = rc->y < top ? top : rc->y;
-             y < rc->y + rc->h && y < top + ONEWWW_PAGE_VIEW; y++) {
-            const uint32_t r = y - top;
-            uint8_t *row = fields + (r & 1U) * ONEWWW_FIELD_BYTES + (r >> 1) * ROW_BYTES;
-            if (row_scb[r] != SCB_640) {
-                /* A picture link: a frame in the paper colour's opposite. */
-                if (y == rc->y || y + 1U == rc->y + rc->h) {
-                    for (int x = rc->x0 / 2; x < rc->x1 / 2 && x < 320; x++) {
-                        if (x >= 0) row[x >> 1] ^= (x & 1) ? 0x0FU : 0xF0U;
-                    }
-                }
-                continue;
-            }
-            {
-                /* The text colour is the pixel value that the link has
-                 * most on this row. */
-                unsigned count[4] = { 0U, 0U, 0U, 0U }, text = 3U;
-                for (int x = rc->x0; x < rc->x1; x++) {
-                    if (x >= 0 && x < PAGE_WIDTH) {
-                        count[(row[x >> 2] >> (6U - 2U * ((unsigned)x & 3U))) & 3U]++;
-                    }
-                }
-                /* On a row with two text colours, value 1 is the mixed
-                 * colour of the ink: it stays as it is. */
-                if (row_ink[r] == 1U && count[1] > count[text]) text = 1U;
-                if (count[2] > count[text]) text = 2U;
-                if (count[text] == 0U) text = row_ink[r];
-                for (int x = rc->x0 - 1; x <= rc->x1; x++) {
-                    unsigned shift, v;
-                    if (x < 0 || x >= PAGE_WIDTH) continue;
-                    shift = 6U - 2U * ((unsigned)x & 3U);
-                    v = (row[x >> 2] >> shift) & 3U;
-                    if (row_ink[r] == 3U) {
-                        /* One text colour: all four levels turn round. */
-                        row[x >> 2] = (uint8_t)(row[x >> 2] ^ (3U << shift));
-                    } else if (v == 0U || v == text) {
-                        row[x >> 2] = (uint8_t)((row[x >> 2] & ~(3U << shift)) |
-                                                ((v == 0U ? text : 0U) << shift));
-                    }
-                }
+        if (rc->link != (uint32_t)selected) continue;
+        for (int y = (int)((int32_t)rc->y - first); y < (int)((int32_t)rc->y - first) + rc->h; y++) {
+            if (y < 0 || y >= view) continue;
+            for (int x = rc->x0 - 1; x <= rc->x1; x++) {
+                if (x >= 0 && x < PAGE_WIDTH) frame[y * PAGE_WIDTH + x] ^= 0x00FFFFFFU;
             }
         }
     }
-    /* The mouse pointer. */
+    /* The status line. */
+    frame_rect(status, (int)ONEWWW_STATUS_ROWS, 0, 0, PAGE_WIDTH,
+               (int)ONEWWW_STATUS_ROWS, pixel_of(STATUS_PAPER));
+    frame_rect(status, (int)ONEWWW_STATUS_ROWS, 0, 0, PAGE_WIDTH, 1, pixel_of(0x0555));
+    if (right != NULL && right[0] != '\0') {
+        right_x -= frame_text(status, (int)ONEWWW_STATUS_ROWS, right, 0, 2, PAGE_WIDTH, 0U, 0);
+        (void)frame_text(status, (int)ONEWWW_STATUS_ROWS, right, right_x, 2, PAGE_WIDTH,
+                         0xFF000000U, 1);
+        right_x -= 12;
+    }
+    (void)frame_text(status, (int)ONEWWW_STATUS_ROWS, left, 6, 2, right_x - 8, 0xFF000000U, 1);
+    /* The mouse pointer, over the page and the status line. */
     for (unsigned py = 0; pointer_x >= 0 && py < POINTER_ROWS; py++) {
-        const int r = pointer_y + (int)py;
-        uint8_t *row;
-        unsigned dark = 0U, light = 0U;
-        if (r < 0 || r >= (int)ONEWWW_VIEW_ROWS) continue;
-        row = fields + ((unsigned)r & 1U) * ONEWWW_FIELD_BYTES +
-              ((unsigned)r >> 1) * ROW_BYTES;
-        if (row_scb[r] != SCB_640 && row_pal[r] >= PAL_PIC) {
-            const uint16_t *pic = pics[row_pal[r] - PAL_PIC];
-            for (unsigned i = 1; i < 16U; i++) {    /* darkest and lightest */
-                if (luminance12(pic[i]) < luminance12(pic[dark])) dark = i;
-                if (luminance12(pic[i]) > luminance12(pic[light])) light = i;
-            }
-        }
+        const int y = pointer_y + (int)py;
+        if (y < 0 || y >= (int)ONEWWW_VIEW_ROWS) continue;
         for (int px = 0; s_pointer[py][px] != '\0'; px++) {
             const int x = pointer_x + px;
-            const char c = s_pointer[py][px];
-            if (c == ' ' || x < 0 || x >= PAGE_WIDTH) continue;
-            if (row_scb[r] == SCB_640) {
-                const unsigned shift = 6U - 2U * ((unsigned)x & 3U);
-                const unsigned ink = row_ink[r];
-                row[x >> 2] = (uint8_t)((row[x >> 2] & ~(3U << shift)) |
-                                        ((c == 'X' ? ink : 0U) << shift));
-            } else {
-                const unsigned shift = (x & 2) == 0 ? 4U : 0U;
-                row[x >> 2] = (uint8_t)((row[x >> 2] & ~(15U << shift)) |
-                                        ((c == 'X' ? dark : light) << shift));
-            }
+            if (s_pointer[py][px] == ' ' || x < 0 || x >= PAGE_WIDTH) continue;
+            frame[y * PAGE_WIDTH + x] = s_pointer[py][px] == 'X' ? 0xFF000000U : 0xFFFFFFFFU;
         }
     }
-    fields[0x7DF8U] = 1U;                                   /* interlace */
-    memcpy(fields + 0x7DFCU, magic, sizeof(magic));
-    memcpy(fields + ONEWWW_FIELD_BYTES + 0x7DFCU, magic, sizeof(magic));
 }

@@ -176,6 +176,15 @@ uint32_t apple_fb_direct_mode_get(void);
 void apple_fb_direct_ack_set(uint32_t gen);
 uint32_t apple_fb_direct_ack_get(void);
 
+/* CPU0 only: a picture that takes the place of the Apple picture on the
+ * screen (ONEWWW). `frame` is 640 x 400 pixels of 32 bits in the format
+ * of an SHR frame slot; it must stay valid. Each call tells the
+ * compositor that the picture changed. NULL gives the screen back to the
+ * Apple picture of CPU1. While it is set, the reader functions report an
+ * SHR 640 frame with a sequence number of its own. */
+void apple_fb_reader_override(const uint32_t *frame);
+const uint32_t *apple_fb_reader_override_frame(void);
+
 /* Diagnostic shadow-dump request (CPU0 writes, CPU1 takes). CPU0 cannot
  * read the Apple memory shadow banks directly: they are cacheable and
  * written through CPU1's L1, so a CPU0 read may observe stale DDR/L2

@@ -5,16 +5,17 @@
 
 /* ONEWWW service, SmartPort private selector $88, unit 0.
  *
- * The card gets a web page, lays it out and draws it. It writes the
- * 640 x 400 picture into CPU1's copy of the Apple video memory. The Apple
- * switches Super Hi-Res on ($C029 = $C1) and sends keys and the mouse.
+ * The card gets a web page, lays it out and draws a 640 x 400 picture in
+ * true colour. That picture takes the place of the Apple picture on the
+ * card's HDMI output while the browser is open. The Apple sends keys and
+ * the mouse; it draws nothing.
  *
  * CONTROL payload: version (1), operation, then:
  *   OPEN  = 1: one byte, ignored. Shows the home page.
  *   CLOSE = 2: one byte, ignored. Gives the screen back to the Apple.
  *   KEY   = 3: one byte, the Apple key code (the high bit is ignored).
  *   MOUSE = 4: x (LE16, 0..639), y (LE16, 0..399), buttons (bit 0 = down).
- * STATUS returns 16 bytes: "ATNW", version, state, shown generation, 0,
+ * STATUS returns 16 bytes: "ATNW", version, state, 0, 0,
  * page rows (LE32), top row (LE32). State: 0 closed, 1 page, 2 address
  * entry, 3 loading, 4 layout, 5 style sheets, 6 text entry in a form. The card closes on the Q key: the Apple
  * reads the state after each key and stops when it is 0. */

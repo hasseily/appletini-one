@@ -453,8 +453,34 @@ void apple_fb_writer_publish_frame_detail(uint32_t display_mode,
     s_writer_current_slot = pick_third(s_writer_current_slot, reader_active);
 }
 
+static const uint32_t *s_override_frame;
+static uint32_t s_override_seq;
+
+void apple_fb_reader_override(const uint32_t *frame)
+{
+    if (frame == NULL && s_override_frame != NULL) {
+        /* The next claim reads the mode of the Apple picture again. */
+        s_reader_last_seq = 0u;
+        s_reader_current_slot = APPLE_FB_NO_SLOT;
+    }
+    s_override_frame = frame;
+    s_override_seq++;
+}
+
+const uint32_t *apple_fb_reader_override_frame(void)
+{
+    return s_override_frame;
+}
+
 uint8_t apple_fb_reader_claim(void)
 {
+    if (s_override_frame != NULL) {
+        /* No slot of CPU1 is read: its writer stays free. Slot 0 is only
+         * a valid number for the callers. */
+        s_reader_display_mode = APPLE_FB_DISPLAY_MODE_SHR;
+        s_reader_format_detail = APPLE_FB_FORMAT_SHR_640;
+        return 0u;
+    }
     for (;;) {
         const uint32_t seq = *s_publish_seq;
         __asm__ volatile ("dmb sy" ::: "memory");
@@ -522,6 +548,9 @@ uint32_t apple_fb_reader_format_detail(void)
 
 uint32_t apple_fb_reader_publish_seq(void)
 {
+    if (s_override_frame != NULL) {
+        return 0x80000000u | (s_override_seq & 0x7FFFFFFFu);
+    }
     const uint32_t seq = *s_publish_seq;
     __asm__ volatile ("dmb sy" ::: "memory");
     return seq;

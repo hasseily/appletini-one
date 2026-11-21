@@ -1,7 +1,7 @@
 """Host check of the ONEWWW renderer.
 
 Compiles the production parser and renderer, lays a page out, composes
-views and decodes the SHR fields to PNG files in build/onewww-host/.
+views and writes them as PNG files in build/onewww-host/.
 
   python scripts/test_onewww_render.py
       The built-in home page, with basic checks.
@@ -30,7 +30,7 @@ MAIN = r'''
 #include "onewww_render.h"
 #include "net_image.h"
 #include "onewww_cookie.h"
-static unsigned char fields[ONEWWW_FIELDS_BYTES];
+static uint32_t frame[ONEWWW_FRAME_PIXELS];
 extern int (*onewww_pause)(void);
 static int calls, stop_after;
 static int stop_soon(void) { return ++calls >= stop_after; }
@@ -153,9 +153,9 @@ int main(int argc, char **argv)
     for (int i = 3; i + 1 < argc; i += 2) {
         unsigned top; FILE *f;
         sscanf(argv[i], "%u", &top);
-        onewww_compose(top, onewww_page_title(), "12%", 0, 300, 120, fields);
+        onewww_compose(top, onewww_page_title(), "12%", 0, 300, 120, frame);
         f = fopen(argv[i + 1], "wb");
-        fwrite(fields, 1, sizeof(fields), f);
+        fwrite(frame, 1, sizeof(frame), f);
         fclose(f);
     }
     return 0;
@@ -163,30 +163,9 @@ int main(int argc, char **argv)
 '''
 
 
-def decode(fields):
-    """Decodes two standard SHR fields as the card renderer does."""
-    img = Image.new("RGB", (640, 400))
-    px = img.load()
-    for row in range(400):
-        base = (row & 1) * 0x8000
-        line = row >> 1
-        scb = fields[base + 0x7D00 + line]
-        pal = base + 0x7E00 + (scb & 15) * 32
-        colours = []
-        for i in range(16):
-            v = fields[pal + 2 * i] | (fields[pal + 2 * i + 1] << 8)
-            colours.append((((v >> 8) & 15) * 16, ((v >> 4) & 15) * 16,
-                            (v & 15) * 16))
-        data = fields[base + line * 160: base + line * 160 + 160]
-        for x in range(640):
-            byte = data[x >> 2]
-            if scb & 0x80:
-                value = (byte >> (6 - 2 * (x & 3))) & 3
-                group = (8, 12, 0, 4)[x & 3]
-                px[x, row] = colours[group + value]
-            else:
-                px[x, row] = colours[(byte >> 4) if (x & 2) == 0 else byte & 15]
-    return img
+def decode(frame):
+    """A view is 640 x 400 pixels of 32 bits, 0xFFrrggbb."""
+    return Image.frombuffer("RGBA", (640, 400), frame, "raw", "BGRA", 0, 1).convert("RGB")
 
 
 FORM_PAGE = """<form action="/find" method="get">
@@ -272,9 +251,7 @@ def main():
     for top in tops:
         fields = (OUT / f"{name}{top}.bin").read_bytes()
         decode(fields).save(OUT / f"{name}{top}.png")
-        if page == "-":
-            assert len(fields) == 0x10000 and fields[0x7DF8] == 1
-            assert fields[0x7DFC:0x7E00] == bytes([0xD3, 0xC8, 0xD2, 0xB4])
+        assert len(fields) == 640 * 400 * 4
     if page == "-":
         assert 600 < rows < 60000 and links == 6, (rows, links)
         assert result[2] == "https://appletini.org/", result[2]

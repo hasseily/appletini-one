@@ -180,7 +180,9 @@ static const uint8_t *row_map(surface_t *s, int y, uint16_t colour,
     static const uint8_t ink3[4] = { 0U, 0U, 1U, 1U };
     static const uint8_t accent3[4] = { 0U, 0U, 2U, 2U };
     static const uint8_t third3[4] = { 0U, 0U, 3U, 3U };
-    static const uint8_t to3[4] = { 0U, 0U, 1U, 2U };       /* two -> three */
+    /* two -> three: the mixed colour of the ink becomes ink. If it became
+     * paper, the text that is on the row already would lose pixels. */
+    static const uint8_t to3[4] = { 0U, 1U, 1U, 2U };
     const rowpal_t *p;
     int d_ink, d_accent, d_third;
 
@@ -232,6 +234,27 @@ static void vline(surface_t *s, int x, int y0, int y1, unsigned level,
     }
 }
 
+/* A grey background of a word is drawn as a thin frame: it then needs no
+ * colour of its own on the row, and the row keeps its colours for text.
+ * Returns 2 for such a background, 1 for one that is as the paper
+ * (nothing to draw), or 0 for a background with a colour, which is
+ * filled. */
+static int back_pattern(uint16_t back, uint16_t paper, uint16_t ink)
+{
+    const int r = (back >> 8) & 15, g = (back >> 4) & 15, b = back & 15;
+    const int most = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const int least = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    const int lp = (int)((paper >> 8) & 15) * 3 + (int)((paper >> 4) & 15) * 6 + (int)(paper & 15);
+    const int li = (int)((ink >> 8) & 15) * 3 + (int)((ink >> 4) & 15) * 6 + (int)(ink & 15);
+    const int lb = r * 3 + g * 6 + b;
+    int part;
+
+    if (most - least > 2 || li == lp) return 0;         /* it has a colour */
+    part = (lb - lp) * 100 / (li - lp);                 /* 0: paper, 100: ink */
+    if (part < 4) return 1;
+    return part < 45 ? 2 : 0;
+}
+
 /* Fills a part of a row with a colour: the background of a word. */
 static void fill_row(surface_t *s, int x0, int x1, int y, uint16_t colour,
                      uint16_t paper)
@@ -257,6 +280,10 @@ static const onewww_glyph_t *glyph_find(const onewww_font_t *f, uint16_t code)
     return code == '?' ? &f->glyphs[0] : glyph_find(f, '?');
 }
 
+/* Set for text on a filled background: a soft edge would be a mix with
+ * the paper of the row, which is not the colour behind the text. */
+static uint8_t s_hard_edges;
+
 static int glyph_draw(surface_t *s, const onewww_font_t *f, uint16_t code,
                       int x, int top, uint16_t colour, uint16_t paper)
 {
@@ -269,8 +296,9 @@ static int glyph_draw(surface_t *s, const onewww_font_t *f, uint16_t code,
         const uint8_t *map = row_map(s, y, colour, paper);
         if (map == NULL) continue;
         for (unsigned gx = 0; gx < g->w; gx++) {
-            const unsigned level =
+            unsigned level =
                 (bits[gy * stride + (gx >> 2)] >> (6U - 2U * (gx & 3U))) & 3U;
+            if (s_hard_edges) level = level >= 2U ? 3U : 0U;
             if (level != 0U) put640(s, x + g->x + (int)gx, y, map[level]);
         }
     }
@@ -347,7 +375,7 @@ static int link_add(const char *href)
     char **list;
     uint32_t *rows, cap = s_doc.links_cap;
 
-    if (href[0] == '#') {
+    if (href[0] == '#' || strncmp(href, "field:", 6U) == 0) {
         snprintf(url, sizeof(url), "%s", href);
     } else if (strncmp(href, "http://", 7U) == 0 || strncmp(href, "https://", 8U) == 0) {
         /* A complete address needs no base (the home page has none). */
@@ -892,6 +920,28 @@ static void flow_flush(flow_t *f, int force)
         }
         f->marker_len = 0U;
     }
+    /* First give the rows all the colours of the line and fill the
+     * backgrounds. A new colour changes the form of a row; when that
+     * occurs after some words are drawn, those words and the later ones
+     * get different letter edges. */
+    for (unsigned i = 0; i < l->items; i++) {
+        const item_t *it = &l->item[i];
+        const int x_start = f->x0 + left + shift + it->x;
+
+        if (it->image >= 0) continue;
+        if (it->back != OW_NO_COLOR &&
+            back_pattern(it->back, f->paper, s_pal[0].ink) == 0) {
+            uint16_t colour = readable(it->colour, it->back);
+            for (int y = f->y; y < f->y + height; y++) {
+                fill_row(f->s, x_start - 3, x_start + it->w + 3, y, it->back, f->paper);
+                if (color_distance(colour, f->paper) > 6) (void)row_map(f->s, y, colour, f->paper);
+            }
+        } else {
+            for (int y = f->y; y < f->y + height; y++) {
+                (void)row_map(f->s, y, readable(it->colour, f->paper), f->paper);
+            }
+        }
+    }
     for (unsigned i = 0; i < l->items; i++) {
         const item_t *it = &l->item[i];
         const onewww_font_t *font = &onewww_fonts[it->font];
@@ -900,13 +950,30 @@ static void flow_flush(flow_t *f, int force)
         int x = x_start;
 
         if (it->back != OW_NO_COLOR && it->image < 0) {
-            /* A word with a background: fill it, then draw the text on it.
-             * Text in a colour near to the page paper is cut out. */
-            for (int y = f->y; y < f->y + height; y++) {
-                fill_row(f->s, x_start - 3, x_start + it->w + 3, y, it->back, f->paper);
+            const int step = back_pattern(it->back, f->paper, s_pal[0].ink);
+            if (step == 0) {
+                /* A word on its background (filled above). Text in a colour
+                 * near to the page paper is cut out of the fill. */
+                colour = readable(it->colour, it->back);
+                if (color_distance(colour, f->paper) <= 6) colour = f->paper;
+                s_hard_edges = 1U;
+            } else if (step > 1) {
+                /* A frame. The words of one run share it: no line between
+                 * a word and the next one of the same run. */
+                const int joins_left = i > 0U && l->item[i - 1U].back == it->back &&
+                                       l->item[i - 1U].link == it->link &&
+                                       l->item[i - 1U].image < 0;
+                const int joins_right = i + 1U < l->items && l->item[i + 1U].back == it->back &&
+                                        l->item[i + 1U].link == it->link &&
+                                        l->item[i + 1U].image < 0;
+                const int x0 = x_start - (joins_left ? 0 : 3);
+                const int x1 = joins_right ? f->x0 + left + shift + l->item[i + 1U].x :
+                                             x_start + it->w + 3;
+                hline(f->s, x0, x1, f->y + 1, LV_LIGHT, INK_OF_ROW, f->paper);
+                hline(f->s, x0, x1, f->y + height - 1, LV_LIGHT, INK_OF_ROW, f->paper);
+                if (!joins_left) vline(f->s, x0, f->y + 1, f->y + height, LV_LIGHT, f->paper);
+                if (!joins_right) vline(f->s, x1 - 1, f->y + 1, f->y + height, LV_LIGHT, f->paper);
             }
-            colour = readable(it->colour, it->back);
-            if (color_distance(colour, f->paper) <= 6) colour = f->paper;
         }
         if (it->image >= 0) {
             draw_gray(f->s, &s_img[it->image], x_start, top + ascent - (int)it->ih,
@@ -916,6 +983,7 @@ static void flow_flush(flow_t *f, int force)
             x += glyph_draw(f->s, font, l->cp[it->start + k], x,
                             top + ascent - font->ascent, colour, f->paper);
         }
+        s_hard_edges = 0U;
         if (it->underline) {
             hline(f->s, x_start, x_start + it->w, top + ascent + 2, LV_INK,
                   colour, f->paper);
@@ -1146,6 +1214,375 @@ static void flow_picture(flow_t *f, int h)
     }
     s_pics++;
     f->y += h;
+}
+
+/* ---- Form fields ------------------------------------------------------- */
+
+static const doc_t *view_doc(void);
+static uint16_t mix(uint16_t a, uint16_t b, int part, int of);
+
+#define FIELD_MAX      256U
+#define FIELD_TEXT_MAX 512U
+
+typedef struct {
+    const onewww_node_t *node;
+    char *value;                /* text fields: what the user typed */
+    uint8_t type;               /* ONEWWW_FIELD_* */
+    uint8_t checked;
+    uint16_t option;            /* selected <option> of a list */
+} field_t;
+
+static field_t s_field[FIELD_MAX];
+static unsigned s_fields;
+
+static void fields_free(void)
+{
+    for (unsigned i = 0; i < s_fields; i++) free(s_field[i].value);
+    memset(s_field, 0, sizeof(s_field));
+    s_fields = 0U;
+}
+
+static int field_find(const onewww_node_t *node)
+{
+    for (unsigned i = 0; i < s_fields; i++) {
+        if (s_field[i].node == node) return (int)i;
+    }
+    return -1;
+}
+
+static int attr_is(const onewww_node_t *n, const char *name, const char *want)
+{
+    char value[24];
+
+    if (n->length == 0U || onewww_attr(n, name, value, sizeof(value)) < 0) return 0;
+    for (char *p = value; *p != '\0'; p++) {
+        if (*p >= 'A' && *p <= 'Z') *p = (char)(*p + 32);
+    }
+    return strcmp(value, want) == 0;
+}
+
+static int attr_has(const onewww_node_t *n, const char *name)
+{
+    char value[4];
+    return n->length != 0U && onewww_attr(n, name, value, sizeof(value)) >= 0;
+}
+
+/* The kind of a form control: ONEWWW_FIELD_*, 0 for a control that the
+ * user cannot use here, -1 for a hidden input. */
+static int field_kind(const onewww_node_t *n)
+{
+    if (n->tag == OW_SELECT) return ONEWWW_FIELD_LIST;
+    if (n->tag == OW_TEXTAREA) return ONEWWW_FIELD_TEXT;
+    if (n->tag == OW_BUTTON) {
+        return attr_is(n, "type", "button") || attr_is(n, "type", "reset") ? 0 : ONEWWW_FIELD_SEND;
+    }
+    if (n->tag != OW_INPUT) return 0;
+    if (attr_is(n, "type", "hidden")) return -1;
+    if (attr_is(n, "type", "submit") || attr_is(n, "type", "image")) return ONEWWW_FIELD_SEND;
+    if (attr_is(n, "type", "button") || attr_is(n, "type", "reset") ||
+        attr_is(n, "type", "file")) return 0;
+    if (attr_is(n, "type", "checkbox")) return ONEWWW_FIELD_CHECK;
+    if (attr_is(n, "type", "radio")) return ONEWWW_FIELD_RADIO;
+    if (attr_is(n, "type", "password")) return ONEWWW_FIELD_PASSWORD;
+    return ONEWWW_FIELD_TEXT;
+}
+
+/* The n-th <option> below a node, in document order. */
+static const onewww_node_t *option_at(const onewww_node_t *n, unsigned *index)
+{
+    for (const onewww_node_t *c = n->first; c != NULL; c = c->next) {
+        const onewww_node_t *found;
+        if (c->tag == OW_OPTION) {
+            if (*index == 0U) return c;
+            (*index)--;
+        } else if (c->tag != OW_TEXT && (found = option_at(c, index)) != NULL) {
+            return found;
+        }
+    }
+    return NULL;
+}
+
+static unsigned option_count(const onewww_node_t *select)
+{
+    unsigned count = 0;
+    for (;;) {
+        unsigned index = count;
+        if (option_at(select, &index) == NULL) return count;
+        count++;
+    }
+}
+
+/* The text of an element, with its white space collapsed. */
+static void node_text(const onewww_node_t *n, char *out, size_t cap)
+{
+    size_t used = 0;
+
+    for (const onewww_node_t *c = n != NULL ? n->first : NULL; c != NULL; c = c->next) {
+        if (c->tag != OW_TEXT) continue;
+        for (uint32_t i = 0; i < c->length && used + 1U < cap; i++) {
+            const int space = (unsigned char)c->text[i] <= ' ';
+            if (space && (used == 0U || out[used - 1U] == ' ')) continue;
+            out[used++] = space ? ' ' : c->text[i];
+        }
+    }
+    while (used != 0U && out[used - 1U] == ' ') used--;
+    out[used] = '\0';
+}
+
+/* The number of a control, or -1. A draw pass notes each control that
+ * shows; a measure pass only looks. */
+static int field_for(const onewww_node_t *n, int create)
+{
+    static char text[FIELD_TEXT_MAX];
+    int field = field_find(n);
+    const int kind = field_kind(n);
+    field_t *fd;
+
+    if (field >= 0 || !create || kind <= 0 || s_fields == FIELD_MAX ||
+        attr_has(n, "disabled")) return field;
+    fd = &s_field[s_fields];
+    fd->node = n; fd->type = (uint8_t)kind; fd->checked = (uint8_t)attr_has(n, "checked");
+    fd->option = 0U; fd->value = NULL;
+    if (kind == ONEWWW_FIELD_TEXT || kind == ONEWWW_FIELD_PASSWORD) {
+        if (n->tag == OW_TEXTAREA) node_text(n, text, sizeof(text));
+        else if (onewww_attr(n, "value", text, sizeof(text)) < 0) text[0] = '\0';
+        fd->value = copy_text(text);
+    } else if (kind == ONEWWW_FIELD_LIST) {
+        const unsigned count = option_count(n);
+        for (unsigned i = 0; i < count; i++) {
+            unsigned index = i;
+            if (attr_has(option_at(n, &index), "selected")) { fd->option = (uint16_t)i; break; }
+        }
+    }
+    return (int)s_fields++;
+}
+
+static const onewww_node_t *form_of(const onewww_node_t *n)
+{
+    for (n = n->parent; n != NULL && n->tag != OW_FORM; n = n->parent) {}
+    return n;
+}
+
+/* The text that a control shows. */
+static void field_show(const onewww_node_t *n, int field, char *out, size_t cap)
+{
+    const int kind = field_kind(n);
+    const field_t *fd = field >= 0 ? &s_field[field] : NULL;
+
+    out[0] = '\0';
+    if (kind == ONEWWW_FIELD_TEXT || kind == ONEWWW_FIELD_PASSWORD) {
+        if (fd != NULL && fd->value != NULL) snprintf(out, cap, "%s", fd->value);
+        else if (n->tag == OW_TEXTAREA) node_text(n, out, cap);
+        else if (onewww_attr(n, "value", out, cap) < 0) out[0] = '\0';
+    } else if (kind == ONEWWW_FIELD_LIST) {
+        unsigned index = fd != NULL ? fd->option : 0U;
+        node_text(option_at(n, &index), out, cap);
+    } else if (kind == ONEWWW_FIELD_SEND) {
+        if (onewww_attr(n, "value", out, cap) <= 0) snprintf(out, cap, "Send");
+    }
+}
+
+int onewww_field_of_link(uint32_t link)
+{
+    const doc_t *d = view_doc();
+    const char *href = link < d->links ? d->href[link] : "";
+    int field = 0;
+
+    if (strncmp(href, "field:", 6U) != 0) return -1;
+    for (const char *p = href + 6; *p >= '0' && *p <= '9'; p++) field = field * 10 + (*p - '0');
+    return (unsigned)field < s_fields ? field : -1;
+}
+
+int onewww_field_type(int field)
+{
+    return (unsigned)field < s_fields ? s_field[field].type : 0;
+}
+
+void onewww_field_label(int field, char *out, size_t cap)
+{
+    const onewww_node_t *n;
+
+    out[0] = '\0';
+    if ((unsigned)field >= s_fields || cap == 0U) return;
+    n = s_field[field].node;
+    if (onewww_attr(n, "placeholder", out, cap) > 0) return;
+    if (onewww_attr(n, "aria-label", out, cap) > 0) return;
+    if (onewww_attr(n, "title", out, cap) > 0) return;
+    if (onewww_attr(n, "name", out, cap) > 0) return;
+    snprintf(out, cap, "Text");
+}
+
+const char *onewww_field_value(int field)
+{
+    return (unsigned)field < s_fields && s_field[field].value != NULL ?
+           s_field[field].value : "";
+}
+
+void onewww_field_set(int field, const char *text)
+{
+    char *copy;
+
+    if ((unsigned)field >= s_fields) return;
+    copy = copy_text(text);
+    if (copy == NULL) return;
+    free(s_field[field].value);
+    s_field[field].value = copy;
+}
+
+void onewww_field_activate(int field)
+{
+    static char name[64], other[64];
+    field_t *fd;
+
+    if ((unsigned)field >= s_fields) return;
+    fd = &s_field[field];
+    if (fd->type == ONEWWW_FIELD_CHECK) fd->checked = !fd->checked;
+    else if (fd->type == ONEWWW_FIELD_LIST) {
+        const unsigned count = option_count(fd->node);
+        fd->option = (uint16_t)(count != 0U ? (fd->option + 1U) % count : 0U);
+    } else if (fd->type == ONEWWW_FIELD_RADIO) {
+        /* One button of a group is on: those with the same name in the
+         * same form. */
+        if (onewww_attr(fd->node, "name", name, sizeof(name)) < 0) name[0] = '\0';
+        for (unsigned i = 0; i < s_fields; i++) {
+            if (s_field[i].type != ONEWWW_FIELD_RADIO ||
+                form_of(s_field[i].node) != form_of(fd->node)) continue;
+            if (onewww_attr(s_field[i].node, "name", other, sizeof(other)) < 0) other[0] = '\0';
+            if (strcmp(name, other) == 0) s_field[i].checked = 0U;
+        }
+        fd->checked = 1U;
+    }
+}
+
+int onewww_field_single(int field)
+{
+    const onewww_node_t *form;
+    int texts = 0;
+
+    if ((unsigned)field >= s_fields) return 0;
+    form = form_of(s_field[field].node);
+    if (form == NULL) return 0;
+    for (unsigned i = 0; i < s_fields; i++) {
+        if ((s_field[i].type == ONEWWW_FIELD_TEXT || s_field[i].type == ONEWWW_FIELD_PASSWORD) &&
+            form_of(s_field[i].node) == form) texts++;
+    }
+    return texts == 1;
+}
+
+typedef struct {
+    char *out;
+    size_t used, cap;
+    const onewww_node_t *pressed;       /* the button that sends the form */
+    int failed;
+} form_data_t;
+
+static void encode(form_data_t *d, const char *text)
+{
+    static const char hex[] = "0123456789ABCDEF";
+
+    for (const unsigned char *p = (const unsigned char *)text; *p != '\0'; p++) {
+        if (d->used + 4U >= d->cap) { d->failed = 1; return; }
+        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') ||
+            *p == '-' || *p == '_' || *p == '.' || *p == '~') d->out[d->used++] = (char)*p;
+        else if (*p == ' ') d->out[d->used++] = '+';
+        else {
+            d->out[d->used++] = '%';
+            d->out[d->used++] = hex[*p >> 4];
+            d->out[d->used++] = hex[*p & 15U];
+        }
+    }
+    d->out[d->used] = '\0';
+}
+
+static void pair(form_data_t *d, const char *name, const char *value)
+{
+    if (name[0] == '\0') return;
+    if (d->used != 0U && d->used + 2U < d->cap) d->out[d->used++] = '&';
+    encode(d, name);
+    if (d->used + 2U < d->cap) d->out[d->used++] = '=';
+    d->out[d->used] = '\0';
+    encode(d, value);
+}
+
+/* Adds the controls below a node that have a value to send. */
+static void form_collect(form_data_t *d, const onewww_node_t *n)
+{
+    static char name[128], value[FIELD_TEXT_MAX];
+
+    for (const onewww_node_t *c = n->first; c != NULL; c = c->next) {
+        const int kind = c->tag == OW_TEXT ? 0 : field_kind(c);
+        const int field = kind > 0 ? field_find(c) : -1;
+        const field_t *fd = field >= 0 ? &s_field[field] : NULL;
+
+        if (c->tag == OW_TEXT) continue;
+        if (kind == 0 && c->tag != OW_INPUT && c->tag != OW_BUTTON) { form_collect(d, c); continue; }
+        if (kind == 0 || attr_has(c, "disabled") ||
+            onewww_attr(c, "name", name, sizeof(name)) <= 0) continue;
+        if (kind < 0) {                                 /* hidden */
+            if (onewww_attr(c, "value", value, sizeof(value)) < 0) value[0] = '\0';
+            pair(d, name, value);
+        } else if (kind == ONEWWW_FIELD_TEXT || kind == ONEWWW_FIELD_PASSWORD) {
+            field_show(c, field, value, sizeof(value));
+            pair(d, name, value);
+        } else if (kind == ONEWWW_FIELD_CHECK || kind == ONEWWW_FIELD_RADIO) {
+            if (fd != NULL ? fd->checked : attr_has(c, "checked")) {
+                if (onewww_attr(c, "value", value, sizeof(value)) < 0) strcpy(value, "on");
+                pair(d, name, value);
+            }
+        } else if (kind == ONEWWW_FIELD_LIST) {
+            unsigned index = fd != NULL ? fd->option : 0U;
+            const onewww_node_t *option = option_at(c, &index);
+            if (option != NULL) {
+                if (onewww_attr(option, "value", value, sizeof(value)) < 0) {
+                    node_text(option, value, sizeof(value));
+                }
+                pair(d, name, value);
+            }
+        } else if (kind == ONEWWW_FIELD_SEND && c == d->pressed) {
+            if (onewww_attr(c, "value", value, sizeof(value)) < 0) value[0] = '\0';
+            pair(d, name, value);
+        }
+    }
+}
+
+int onewww_field_submit(int field, char *url, size_t url_cap,
+                        char *body, size_t body_cap, int *post)
+{
+    static char action[HTTP_URL_MAX];
+    const onewww_node_t *form;
+    form_data_t d;
+    char *cut;
+
+    if ((unsigned)field >= s_fields || s_doc.base == NULL || url_cap < 16U || body_cap < 16U) return -1;
+    form = form_of(s_field[field].node);
+    if (form == NULL) return -1;
+    memset(&d, 0, sizeof(d));
+    d.out = body; d.cap = body_cap;
+    body[0] = '\0';
+    d.pressed = s_field[field].type == ONEWWW_FIELD_SEND ? s_field[field].node : NULL;
+    for (unsigned i = 0; d.pressed == NULL && i < s_fields; i++) {     /* the first button */
+        if (s_field[i].type == ONEWWW_FIELD_SEND && form_of(s_field[i].node) == form) {
+            d.pressed = s_field[i].node;
+        }
+    }
+    form_collect(&d, form);
+    if (d.failed) return -1;
+    if (onewww_attr(form, "action", action, sizeof(action)) <= 0) {
+        snprintf(url, url_cap, "%s", s_doc.base);
+    } else if (http_url_resolve(s_doc.base, action, url, url_cap) != 0) {
+        return -1;
+    }
+    cut = strchr(url, '#');
+    if (cut != NULL) *cut = '\0';
+    *post = attr_is(form, "method", "post");
+    if (!*post) {                       /* the data is the query of the address */
+        cut = strchr(url, '?');
+        if (cut != NULL) *cut = '\0';
+        if (strlen(url) + 1U + d.used + 1U > url_cap) return -1;
+        if (d.used != 0U) { strcat(url, "?"); strcat(url, body); }
+        body[0] = '\0';
+    }
+    return 0;
 }
 
 /* ---- Document walk ----------------------------------------------------- */
@@ -1517,36 +1954,70 @@ static void walk_node(flow_t *f, const onewww_node_t *n, text_t tx)
         }
         flow_word_end(f, &tx);
         return;
-    case OW_INPUT: {
-        char type[16] = "text";
-        (void)onewww_attr(n, "type", type, sizeof(type));
-        if (strcmp(type, "hidden") == 0) return;
-        if (onewww_attr(n, "value", text, 64U) < 0) text[0] = '\0';
-        if (strcmp(type, "submit") == 0 || strcmp(type, "button") == 0 ||
-            strcmp(type, "reset") == 0) {
-            tx.font = ONEWWW_FONT_BODY_B;
-            flow_literal(f, &tx, "[");
-            flow_literal(f, &tx, text[0] != '\0' ? text : "Send");
-            flow_literal(f, &tx, "]");
-        } else if (strcmp(type, "checkbox") == 0 || strcmp(type, "radio") == 0) {
-            /* Not shown before forms work: pages hide many of them. */
-        } else {
-            flow_literal(f, &tx, "[");
-            flow_literal(f, &tx, text[0] != '\0' ? text :
-                         "\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0");
-            flow_literal(f, &tx, "]");
+    case OW_INPUT: case OW_SELECT: case OW_TEXTAREA: case OW_BUTTON: {
+        /* A form control: a word with a background that the user can
+         * select as a link. Its address is "field:<number>". */
+        const int kind = field_kind(n);
+        const int field = kind > 0 ? field_for(n, f->s != NULL) : -1;
+        const field_t *fd = field >= 0 ? &s_field[field] : NULL;
+        char *out = text;
+        size_t used = 0;
+        int width = 0, shown = 0;
+
+        if (kind < 0 || (n->tag == OW_BUTTON && !has_text(n))) return;
+        tx.underline = 0U;
+        tx.colour = readable(tx.colour, f->paper);
+        tx.back = mix(f->paper, tx.colour, 1, kind == ONEWWW_FIELD_SEND || kind == 0 ? 3 : 6);
+        if (kind > 0 && attr_has(n, "disabled")) tx.back = OW_NO_COLOR;
+        if (fd != NULL && f->s != NULL) {
+            char address[20];
+            snprintf(address, sizeof(address), "field:%d", field);
+            tx.link = link_add(address);
+        } else if (kind > 0) {
+            tx.link = f->s != NULL ? -1 : 0;
         }
+        if (n->tag == OW_BUTTON) {              /* the text of the button is its content */
+            tx.font = ONEWWW_FONT_BODY_B;
+            flow_literal(f, &tx, "\xC2\xA0");
+            walk_children(f, n, tx);
+            flow_literal(f, &tx, "\xC2\xA0");
+            flow_word_end(f, &tx);
+            f->line->width += 3;
+            return;
+        }
+        memcpy(out, "\xC2\xA0", 2U); used = 2U;
+        if (kind == ONEWWW_FIELD_CHECK || kind == ONEWWW_FIELD_RADIO) {
+            const int on = fd != NULL ? fd->checked : attr_has(n, "checked");
+            used += (size_t)snprintf(out + used, 16U, "%s", kind == ONEWWW_FIELD_CHECK ?
+                                     (on ? "\xE2\x9C\x93" : "\xC2\xA0\xC2\xA0") :
+                                     (on ? "\xE2\x97\x8F" : "\xE2\x97\x8B"));
+        } else {
+            static char value[FIELD_TEXT_MAX];
+            if (kind > 0) field_show(n, field, value, sizeof(value));
+            else if (onewww_attr(n, "value", value, sizeof(value)) <= 0) strcpy(value, "Button");
+            if (kind == ONEWWW_FIELD_TEXT || kind == ONEWWW_FIELD_PASSWORD) {
+                width = n->tag == OW_TEXTAREA ? 30 : attr_number(n, "size", 18);
+                if (width < 4) width = 4;
+                if (width > 40) width = 40;
+            }
+            if (kind == ONEWWW_FIELD_SEND || kind == 0) tx.font = ONEWWW_FONT_BODY_B;
+            for (const unsigned char *v = (const unsigned char *)value;
+                 *v != '\0' && used + 8U < 400U && (width == 0 || shown < width); v++) {
+                if ((*v & 0xC0U) != 0x80U) shown++;         /* a new character */
+                if (kind == ONEWWW_FIELD_PASSWORD) {
+                    if ((*v & 0xC0U) != 0x80U) { memcpy(out + used, "\xE2\x97\x8F", 3U); used += 3U; }
+                } else if (*v <= ' ') { memcpy(out + used, "\xC2\xA0", 2U); used += 2U; }
+                else out[used++] = (char)*v;
+            }
+            for (; shown < width; shown++) { memcpy(out + used, "\xC2\xA0", 2U); used += 2U; }
+            if (kind == ONEWWW_FIELD_LIST) { memcpy(out + used, "\xC2\xA0\xE2\x96\xBE", 5U); used += 5U; }
+        }
+        memcpy(out + used, "\xC2\xA0", 3U);
+        flow_literal(f, &tx, out);
         flow_word_end(f, &tx);
+        f->line->width += 3;
         return;
     }
-    case OW_BUTTON:
-        if (!has_text(n)) return;       /* a button with a picture only */
-        tx.font = ONEWWW_FONT_BODY_B;
-        flow_literal(f, &tx, "[");
-        walk_children(f, n, tx);
-        flow_literal(f, &tx, "]");
-        flow_word_end(f, &tx);
-        return;
     case OW_A:
         if (n->length != 0U && onewww_attr(n, "href", text, sizeof(text)) > 0) {
             /* A measure pass needs only to know that this is a link. */
@@ -1931,6 +2402,7 @@ void onewww_page_free(void)
     memset(&s_doc, 0, sizeof(s_doc));
     sheets_free();
     images_free();
+    fields_free();
     if (s_work.dom != NULL) onewww_dom_free(s_work.dom);
     memset(&s_work, 0, sizeof(s_work));
     s_work.paper = 0x0FFF;

@@ -60,4 +60,10 @@ const char onewww_home_page[] =
 "come after that; Escape stops them. A large picture has rows of its own "
 "with sixteen colours. A picture at the side of text shows in grey "
 "levels.</p>"
-"<p class=\"note\"><small>Forms are not in this version.</small></p>";
+"<h2>Forms</h2>"
+"<p>The fields of a form are in the list of links: select one with Tab "
+"and press Return, or click it. In a text field, type the text and press "
+"Return; in the only text field of a form, Return also sends the form. "
+"Return changes a check box, selects a radio button and takes the next "
+"entry of a list. The card keeps cookies while the browser is open, so a "
+"login stays open.</p>";

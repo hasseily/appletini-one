@@ -10,6 +10,7 @@
 #include "compositor_layout.h"
 #include "http_service.h"
 #include "net_image.h"
+#include "onewww_cookie.h"
 #include "onewww_dom.h"
 #include "onewww_render.h"
 #include "onewww_task.h"
@@ -33,7 +34,7 @@
 /* While a page grows, show it this often. */
 #define GROW_US   300000U
 
-enum { M_CLOSED, M_VIEW, M_INPUT, M_LOADING, M_LAYOUT, M_SHEETS };
+enum { M_CLOSED, M_VIEW, M_INPUT, M_LOADING, M_LAYOUT, M_SHEETS, M_FIELD };
 
 static const char s_request_headers[] =
     "User-Agent: Mozilla/5.0 (compatible; ONEWWW/1.0; Appletini; Apple II)\r\n"
@@ -43,6 +44,12 @@ static const char s_request_headers[] =
 static const char s_image_headers[] =
     "User-Agent: Mozilla/5.0 (compatible; ONEWWW/1.0; Appletini; Apple II)\r\n"
     "Accept: image/png,image/jpeg,image/gif;q=0.9,*/*;q=0.1\r\n";
+
+static const char s_post_headers[] =
+    "User-Agent: Mozilla/5.0 (compatible; ONEWWW/1.0; Appletini; Apple II)\r\n"
+    "Accept: text/html,text/plain;q=0.9,*/*;q=0.5\r\n"
+    "Accept-Language: en\r\n"
+    "Content-Type: application/x-www-form-urlencoded\r\n";
 
 static void task_stop(void);
 static int body_add(const uint8_t *piece, size_t n, size_t limit);
@@ -58,6 +65,11 @@ static struct {
     unsigned sheet;                 /* style sheet in work */
     uint8_t sheet_loading, sheet_loads;
     uint64_t sheet_started;
+    /* A form: the field that the user types in, and the data of a POST
+     * that the next request sends. */
+    int field;
+    char post[2048];
+    uint8_t post_next;
     /* Pictures: they come after the page shows. */
     uint8_t image_active, image_loading, image_loads;
     unsigned image, image_new;
@@ -179,6 +191,13 @@ static void go(const char *url, int push)
     char *hash;
     int result;
 
+    if (s.post_next) {                  /* the data of a form */
+        s.post_next = 0U;
+        request.method = "POST";
+        request.headers = s_post_headers;
+        request.body = (const uint8_t *)s.post;
+        request.body_length = strlen(s.post);
+    }
     task_stop();
     s.image_active = 0U; s.image_loading = 0U;
     if (s.owner) { owner_drop(); if (s.owner) { say("The network is busy. Try again."); return; } }
@@ -495,6 +514,14 @@ static void relayout_task(void)
     s.image_new = 0U; s.image_laid = now_us(); s.dirty = 1U;
 }
 
+/* Shows the page again after a field changed. */
+static void layout_again(void)
+{
+    task_stop();
+    s.abort = 0U;
+    onewww_task_start(relayout_task);
+}
+
 static void images_poll(void)
 {
     uint8_t piece[4096];
@@ -707,7 +734,18 @@ static void present(void)
     if (s.pointer && s.py < (int32_t)ONEWWW_PAGE_VIEW) {
         hover = onewww_link_at(s.px, s.top + (uint32_t)s.py);
     }
-    if (s.mode == M_INPUT) {
+    if (s.mode == M_FIELD) {
+        char label[64];
+        onewww_field_label(s.field, label, sizeof(label));
+        if (onewww_field_type(s.field) == ONEWWW_FIELD_PASSWORD) {
+            char stars[64];
+            size_t n = s.input_length < sizeof(stars) - 1U ? s.input_length : sizeof(stars) - 1U;
+            memset(stars, '*', n); stars[n] = '\0';
+            snprintf(left, sizeof(left), "%s: %s_", label, stars);
+        } else {
+            snprintf(left, sizeof(left), "%s: %s_", label, s.input);
+        }
+    } else if (s.mode == M_INPUT) {
         snprintf(left, sizeof(left), "Go to: %s_", s.input);
     } else if (s.mode == M_LOADING) {
         snprintf(left, sizeof(left), "Loading (%lu KiB, Escape stops): %s",
@@ -750,7 +788,7 @@ void onewww_poll(void)
     if (s.owner && s.mode != M_LOADING && s.mode != M_SHEETS && !s.image_loading) owner_drop();
     if (s.mode == M_LOADING) load_poll();
     if (s.mode == M_SHEETS && !onewww_task_active()) sheets_poll();
-    if (s.image_active && (s.mode == M_VIEW || s.mode == M_INPUT) &&
+    if (s.image_active && (s.mode == M_VIEW || s.mode == M_INPUT || s.mode == M_FIELD) &&
         !onewww_task_active()) images_poll();
     if (onewww_task_active()) {
         s.slice_start = now_us();
@@ -776,11 +814,50 @@ void onewww_poll(void)
 
 /* ---- Input ------------------------------------------------------------- */
 
+/* Sends the form of a field. */
+static void send_form(int field)
+{
+    static char url[HTTP_URL_MAX];
+    int post = 0;
+
+    if (onewww_field_submit(field, url, sizeof(url), s.post, sizeof(s.post), &post) != 0) {
+        say("This form cannot be sent (it is too long, or it has no address).");
+        return;
+    }
+    s.post_next = (uint8_t)post;
+    go(url, 1);
+    s.post_next = 0U;
+}
+
+static void field_use(int field)
+{
+    switch (onewww_field_type(field)) {
+    case ONEWWW_FIELD_TEXT: case ONEWWW_FIELD_PASSWORD:
+        s.field = field; s.mode = M_FIELD; s.dirty = 1U;
+        snprintf(s.input, sizeof(s.input), "%s", onewww_field_value(field));
+        s.input_length = (uint32_t)strlen(s.input);
+        break;
+    case ONEWWW_FIELD_CHECK: case ONEWWW_FIELD_RADIO: case ONEWWW_FIELD_LIST:
+        onewww_field_activate(field);
+        layout_again();
+        break;
+    case ONEWWW_FIELD_SEND:
+        send_form(field);
+        break;
+    default:
+        break;
+    }
+}
+
 static void follow(int32_t link)
 {
     const char *href;
 
     if (link < 0) return;
+    if (onewww_field_of_link((uint32_t)link) >= 0) {
+        field_use(onewww_field_of_link((uint32_t)link));
+        return;
+    }
     href = onewww_link_href((uint32_t)link);
     if (href[0] == '#') {
         const int row = onewww_anchor_row(href + 1);
@@ -860,6 +937,24 @@ static void key(uint8_t code)
             s.input[s.input_length] = '\0';
             s.dirty = 1U;
         }
+    } else if (s.mode == M_FIELD) {
+        if (code == 0x0DU) {
+            const int field = s.field;
+            s.mode = M_VIEW; s.dirty = 1U;
+            onewww_field_set(field, s.input);
+            /* Return in the only text field of a form sends the form. */
+            if (onewww_field_single(field)) send_form(field);
+            if (s.mode == M_VIEW) layout_again();
+        } else if (code == 0x1BU) {
+            s.mode = M_VIEW; s.dirty = 1U;
+        } else if (code == 0x08U || code == 0x7FU) {
+            if (s.input_length != 0U) s.input[--s.input_length] = '\0';
+            s.dirty = 1U;
+        } else if (code >= 0x20U && code < 0x7FU && s.input_length + 1U < 500U) {
+            s.input[s.input_length++] = (char)code;
+            s.input[s.input_length] = '\0';
+            s.dirty = 1U;
+        }
     } else if (s.mode == M_SHEETS) {
         if (code == 0x1BU) {            /* go on without the other sheets */
             if (s.sheet_loading) { owner_drop(); body_free(); s.sheet_loading = 0U; }
@@ -915,6 +1010,10 @@ uint8_t onewww_control(const uint8_t *payload, uint16_t length)
         body_free();
         s.sheet_loading = 0U; s.image_active = 0U; s.image_loading = 0U;
         onewww_pause = layout_pause;
+        /* A new start of the browser has no cookies. */
+        onewww_cookie_clear();
+        http_core_cookie_hooks(onewww_cookie_load, onewww_cookie_store);
+        s.post_next = 0U;
         s.release = 0U; s.history_count = 0U; s.pointer = 0U; s.message[0] = '\0';
         show_home();
         if (onewww_page_rows() == 0U) { s.mode = M_CLOSED; return SP_BUSY; }

@@ -84,8 +84,8 @@ static const char s_default_sheet[] =
     "main,figure,figcaption,details,summary,hgroup,noscript,table,tr,td,th,"
     "caption,hr{display:block}"
     "li{display:list-item}"
-    "head,script,style,title,meta,link,base,template,svg,iframe,select,option,"
-    "textarea,object,video,audio,canvas,map,col,colgroup,area,embed,source,"
+    "head,script,style,title,meta,link,base,template,svg,iframe,option,"
+    "object,video,audio,canvas,map,col,colgroup,area,embed,source,"
     "track,[hidden]{display:none}"
     "p,dl,blockquote,figure,pre{margin-top:10px;margin-bottom:10px}"
     "h1{font-size:2em;margin-top:12px;margin-bottom:10px}"
@@ -604,6 +604,11 @@ static void declaration(decls_t *d, const char *name, size_t name_n,
         put_length(d, P_PADDING_LEFT, &t[0]);
     } else if (word_is(name, name_n, "padding-right") || word_is(name, name_n, "padding-inline-end")) {
         put_length(d, P_PADDING_RIGHT, &t[0]);
+    } else if (word_is(name, name_n, "opacity")) {
+        /* Fully transparent: on the page, but not for the eye. */
+        if (word_is(v, n, "0") || word_is(v, n, "0.0") || word_is(v, n, "0%")) {
+            put(d, P_DISPLAY, U_NONE, OW_D_NONE);
+        }
     } else if (word_is(name, name_n, "position")) {
         if (word_is(v, n, "absolute") || word_is(v, n, "fixed")) d->away = 1U;
     } else if (word_is(name, name_n, "clip") || word_is(name, name_n, "clip-path")) {

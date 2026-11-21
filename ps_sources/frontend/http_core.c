@@ -140,6 +140,14 @@ int http_url_resolve(const char *base, const char *location, char *out, size_t c
 static int accept_gzip;
 void http_core_accept_gzip(int on) { accept_gzip = on != 0; }
 
+static http_cookie_load_t cookie_load;
+static http_cookie_store_t cookie_store;
+static http_url_t cookie_url;           /* the request that is in progress */
+void http_core_cookie_hooks(http_cookie_load_t load, http_cookie_store_t store)
+{
+    cookie_load = load; cookie_store = store;
+}
+
 int http_request_build(const http_url_t *url, const char *method,
                        const char *headers, size_t body_length,
                        int strip_credentials, char *out, size_t cap)
@@ -178,6 +186,17 @@ int http_request_build(const http_url_t *url, const char *method,
             memcpy(out + used, "\r\n", 2); used += 2;
         }
         headers = end ? end + 1 : headers + length;
+    }
+    if (accept_gzip) cookie_url = *url;
+    if (accept_gzip && cookie_load != NULL && cap - used > 16U) {
+        /* "Cookie: " + value + CR LF, when the value fits. */
+        const size_t room = cap - used - 12U;
+        const size_t n = cookie_load(url, out + used + 8U, room);
+        if (n != 0U && n < room) {
+            memcpy(out + used, "Cookie: ", 8U);
+            memcpy(out + used + 8U + n, "\r\n", 2U);
+            used += 8U + n + 2U;
+        }
     }
     if (!user_agent) {
         static const char default_agent[] = "User-Agent: Appletini-HTTP/1\r\n";
@@ -368,6 +387,9 @@ static int response_line(http_parser_t *p)
         p->chunked = 1;
     } else if (equal(p->line, "Content-Encoding") && !equal(value, "identity") &&
                !(accept_gzip && equal(value, "gzip"))) return HTTP_UNSUPPORTED;
+    else if (accept_gzip && cookie_store != NULL && equal(p->line, "Set-Cookie")) {
+        cookie_store(&cookie_url, value);
+    }
     else if (equal(p->line, "Content-Type")) {
         if (strlen(value) >= sizeof(p->content_type)) return HTTP_LIMIT;
         if (p->content_type[0] && strcmp(p->content_type, value)) return HTTP_FORMAT;

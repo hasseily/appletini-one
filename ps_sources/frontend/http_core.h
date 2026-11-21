@@ -37,6 +37,13 @@ int http_request_build(const http_url_t *url, const char *method,
                        int strip_credentials, char *out, size_t cap);
 /* On: requests ask for gzip and a gzip body passes through unchanged. */
 void http_core_accept_gzip(int on);
+/* Cookies for the client that has gzip on (ONEWWW). `load` writes the
+ * value of the Cookie header for a request and returns its length;
+ * `store` takes each Set-Cookie value of a response. Both get the URL of
+ * the request, also for each step of a redirect. NULL: no cookies. */
+typedef size_t (*http_cookie_load_t)(const http_url_t *url, char *out, size_t capacity);
+typedef void (*http_cookie_store_t)(const http_url_t *url, const char *set_cookie);
+void http_core_cookie_hooks(http_cookie_load_t load, http_cookie_store_t store);
 void http_parser_init(http_parser_t *parser, int head, uint32_t limit);
 int http_parser_feed(http_parser_t *parser, const uint8_t *data, size_t length,
                      size_t *used, http_body_sink_t sink, void *ctx);

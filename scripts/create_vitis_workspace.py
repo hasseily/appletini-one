@@ -1228,6 +1228,7 @@ run_step(
             "../../../ps_sources/frontend/onewww_task.c",
             "../../../ps_sources/frontend/onewww_css.c",
             "../../../ps_sources/frontend/onewww_css_colors.c",
+            "../../../ps_sources/frontend/onewww_cookie.c",
             "../../../ps_sources/frontend/onewww_entities.c",
             "../../../ps_sources/frontend/ad8088_machine.c",
             "../../../ps_sources/frontend/ad8088_service.c",

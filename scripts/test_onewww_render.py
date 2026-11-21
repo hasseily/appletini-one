@@ -29,6 +29,7 @@ MAIN = r'''
 #include <string.h>
 #include "onewww_render.h"
 #include "net_image.h"
+#include "onewww_cookie.h"
 static unsigned char fields[ONEWWW_FIELDS_BYTES];
 extern int (*onewww_pause)(void);
 static int calls, stop_after;
@@ -105,6 +106,47 @@ int main(int argc, char **argv)
         /* The page before stays on the screen while the new one is made. */
         if (onewww_page_rows() == 0 || onewww_page_layout() != 0) return 4;
     }
+    if (getenv("ONEWWW_FORM") != NULL) {    /* cookies: scope, secure, removal */
+        static http_url_t site, plain, other;
+        char out[256];
+        strcpy(site.host, "www.site.test"); strcpy(site.path, "/a/b"); site.tls = 1;
+        plain = site; plain.tls = 0;
+        strcpy(other.host, "evil.test"); strcpy(other.path, "/a/b"); other.tls = 1;
+        onewww_cookie_clear();
+        onewww_cookie_store(&site, "sid=abc; Path=/; Domain=site.test; Secure; HttpOnly");
+        onewww_cookie_store(&site, "t=1; Path=/a");
+        onewww_cookie_store(&site, "far=1; Path=/zzz");
+        onewww_cookie_store(&site, "x=9; Domain=other.com");
+        if (onewww_cookie_load(&site, out, sizeof(out)) == 0 || strcmp(out, "sid=abc; t=1") != 0) return 6;
+        if (onewww_cookie_load(&plain, out, sizeof(out)) == 0 || strcmp(out, "t=1") != 0) return 6;
+        if (onewww_cookie_load(&other, out, sizeof(out)) != 0) return 6;
+        onewww_cookie_store(&site, "t=2; Path=/a");
+        onewww_cookie_store(&site, "sid=; Path=/; Domain=site.test; Max-Age=0");
+        if (onewww_cookie_load(&site, out, sizeof(out)) == 0 || strcmp(out, "t=2") != 0) return 6;
+    }
+    if (getenv("ONEWWW_FORM") != NULL) {    /* fill the fields, send each form */
+        static char url[1024], body[2048];
+        int post;
+        for (unsigned l = 0; l < onewww_link_count(); l++) {
+            const int field = onewww_field_of_link(l);
+            switch (field < 0 ? 0 : onewww_field_type(field)) {
+            case ONEWWW_FIELD_TEXT: onewww_field_set(field, "apple ii & more"); break;
+            case ONEWWW_FIELD_PASSWORD: onewww_field_set(field, "s3cret"); break;
+            case ONEWWW_FIELD_CHECK: case ONEWWW_FIELD_RADIO: case ONEWWW_FIELD_LIST:
+                onewww_field_activate(field);
+                break;
+            default: break;
+            }
+        }
+        if (onewww_page_layout() != 0) return 5;
+        for (unsigned l = 0; l < onewww_link_count(); l++) {
+            const int field = onewww_field_of_link(l);
+            if (field >= 0 && onewww_field_type(field) == ONEWWW_FIELD_SEND &&
+                onewww_field_submit(field, url, sizeof(url), body, sizeof(body), &post) == 0) {
+                fprintf(stderr, "FORM %d %s|%s\n", post, url, body);
+            }
+        }
+    }
     printf("%u %u %s\n", (unsigned)onewww_page_rows(),
            (unsigned)onewww_link_count(),
            onewww_link_count() ? onewww_link_href(0) : "-");
@@ -147,6 +189,41 @@ def decode(fields):
     return img
 
 
+FORM_PAGE = """<form action="/find" method="get">
+<input type="hidden" name="src" value="box">
+<input type="text" name="q" value="old">
+<select name="lang"><option value="en">English<option value="fr" selected>French
+<option value="de">German</select>
+<input type="checkbox" name="exact" value="1">
+<input type="radio" name="size" value="s" checked><input type="radio" name="size" value="l">
+<input type="submit" name="go" value="Search"></form>
+<form action="login?next=1" method="POST">
+<input name="user" value="henri"><input type="password" name="pass">
+<input type="checkbox" name="keep" checked><textarea name="note">first</textarea>
+<button name="b" value="in">Log <b>in</b></button><input type="submit" name="other" value="x">
+</form>"""
+
+
+def check_forms(exe, env):
+    """Fills each field of a test page and checks the requests of its forms."""
+    page = OUT / "form.html"
+    page.write_text(FORM_PAGE)
+    picture = OUT / "form0.bin"
+    run = subprocess.run([str(exe), str(page), "https://site.test/a/b?x=1", "0", str(picture)],
+                         check=True, env=dict(env, ONEWWW_FORM="1"),
+                         capture_output=True, text=True)
+    decode(picture.read_bytes()).save(OUT / "form0.png")
+    forms = [line[5:] for line in run.stderr.splitlines() if line.startswith("FORM ")]
+    # GET: the text is encoded; the list moved from French to German; the
+    # box is now on; the second radio button is on; one button only.
+    assert forms[0] == ("0 https://site.test:443/find?src=box&q=apple+ii+%26+more"
+                        "&lang=de&exact=1&size=l&go=Search|"), forms[0]
+    # POST with the <button>: the box was on and is now off.
+    assert forms[1] == ("1 https://site.test:443/a/login?next=1|user=apple+ii+%26+more"
+                        "&pass=s3cret&note=apple+ii+%26+more&b=in"), forms[1]
+    assert forms[2].endswith("&other=x"), forms[2]
+
+
 def main():
     gcc = os.environ.get("GCC") or shutil.which("gcc") or str(GCC_DEFAULT)
     env = dict(os.environ)
@@ -157,7 +234,7 @@ def main():
     sources = ["onewww_render.c", "onewww_dom.c", "onewww_entities.c",
                "onewww_css.c", "onewww_css_colors.c",
                "onewww_font_data.c", "onewww_home_page.c", "http_core.c",
-               "net_image.c", "../lib/lodepng.c"]
+               "net_image.c", "../lib/lodepng.c", "onewww_cookie.c"]
     subprocess.run([gcc, "-std=gnu99", "-O1", "-Wall", "-Wextra", "-I",
                     str(SRC), str(OUT / "main.c")] +
                    [str(SRC / s) for s in sources] + ["-o", str(exe)],
@@ -201,6 +278,7 @@ def main():
     if page == "-":
         assert 600 < rows < 60000 and links == 6, (rows, links)
         assert result[2] == "https://appletini.org/", result[2]
+        check_forms(exe, env)
     print(f"PASS: {rows} rows, {links} links; pictures in {OUT}")
 
 

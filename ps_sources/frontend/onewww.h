@@ -16,7 +16,7 @@
  *   MOUSE = 4: x (LE16, 0..639), y (LE16, 0..399), buttons (bit 0 = down).
  * STATUS returns 16 bytes: "ATNW", version, state, shown generation, 0,
  * page rows (LE32), top row (LE32). State: 0 closed, 1 page, 2 address
- * entry, 3 loading, 4 layout, 5 style sheets. The card closes on the Q key: the Apple
+ * entry, 3 loading, 4 layout, 5 style sheets, 6 text entry in a form. The card closes on the Q key: the Apple
  * reads the state after each key and stops when it is 0. */
 #define ONEWWW_SELECTOR 0x88U
 

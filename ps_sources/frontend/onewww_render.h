@@ -58,6 +58,33 @@ void onewww_page_image_failed(unsigned image);
  * in the text when a new layout moves the rows. */
 int onewww_link_near(uint32_t row);
 
+/* Form fields. A control of a form is a link whose address is
+ * "field:<number>": the keys and the mouse select it as a link.
+ * After a change, call onewww_page_layout() again to show it. */
+enum {
+    ONEWWW_FIELD_TEXT = 1,      /* a line of text, also <textarea> */
+    ONEWWW_FIELD_PASSWORD,
+    ONEWWW_FIELD_CHECK,
+    ONEWWW_FIELD_RADIO,
+    ONEWWW_FIELD_LIST,          /* <select> */
+    ONEWWW_FIELD_SEND           /* a button that sends the form */
+};
+int onewww_field_of_link(uint32_t link);        /* -1: a normal link */
+int onewww_field_type(int field);
+void onewww_field_label(int field, char *out, size_t capacity);
+const char *onewww_field_value(int field);      /* text fields */
+void onewww_field_set(int field, const char *text);
+/* Changes a check box, selects a radio button, or takes the next entry
+ * of a list. */
+void onewww_field_activate(int field);
+/* Is this the only text field of its form? Return then sends the form. */
+int onewww_field_single(int field);
+/* Makes the request that sends the form of a field. *post = 0: `url` has
+ * the data. *post = 1: `body` has the data for a POST to `url`.
+ * Returns 0, or -1 when the form cannot be sent. */
+int onewww_field_submit(int field, char *url, size_t url_capacity,
+                        char *body, size_t body_capacity, int *post);
+
 /* Both steps, without linked sheets. */
 int onewww_page_build(const uint8_t *html, size_t length,
                       const char *content_type, const char *base_url,

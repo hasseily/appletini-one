@@ -29,7 +29,9 @@ typedef enum {
 
 #define OW_NO_COLOR 0xFFFFU
 
-enum { OW_D_INLINE = 0, OW_D_BLOCK, OW_D_NONE, OW_D_LIST_ITEM };
+enum { OW_D_INLINE = 0, OW_D_BLOCK, OW_D_NONE, OW_D_LIST_ITEM, OW_D_FLEX };
+enum { OW_FLOAT_NONE = 0, OW_FLOAT_LEFT, OW_FLOAT_RIGHT };
+enum { OW_SIDE_TOP = 1, OW_SIDE_RIGHT = 2, OW_SIDE_BOTTOM = 4, OW_SIDE_LEFT = 8 };
 enum { OW_ALIGN_LEFT = 0, OW_ALIGN_CENTER, OW_ALIGN_RIGHT };
 
 /* The style of an element after the cascade. Lengths are screen pixels. */
@@ -41,6 +43,13 @@ typedef struct onewww_style {
     uint8_t bold, italic, mono, underline, pre, nowrap, align, list_none;
     int16_t margin_top, margin_bottom, margin_left, margin_right;
     int16_t padding_top, padding_bottom, padding_left, padding_right;
+    /* Pixels; a negative value is a percentage of the space; 0: not set. */
+    int16_t width, max_width;
+    uint8_t floating;           /* OW_FLOAT_* */
+    uint8_t clear;              /* OW_SIDE_LEFT and OW_SIDE_RIGHT */
+    uint8_t border;             /* OW_SIDE_*: sides with a visible border */
+    uint8_t margin_auto;        /* OW_SIDE_LEFT and OW_SIDE_RIGHT */
+    uint8_t flex_column;        /* a flex box that puts its items in a column */
 } onewww_style_t;
 
 typedef struct onewww_node {

@@ -28,6 +28,7 @@ MAIN = r'''
 #include <stdlib.h>
 #include <string.h>
 #include "onewww_render.h"
+#include "net_image.h"
 static unsigned char fields[ONEWWW_FIELDS_BYTES];
 extern int (*onewww_pause)(void);
 static int calls, stop_after;
@@ -50,11 +51,12 @@ int main(int argc, char **argv)
     for (stop_after = 1; stop_after <= 41; stop_after += 40) {
         calls = 0;
         onewww_pause = stop_soon;
-        if (onewww_page_build(html, length, NULL, argv[2], internal) == 0 ||
+        if (onewww_page_build(html, length, NULL, internal ? NULL : argv[2], internal) == 0 ||
             onewww_page_rows() != 0) return 3;
         onewww_pause = NULL;
     }
-    if (onewww_page_parse(html, length, NULL, argv[2], internal) != 0) return 2;
+    /* The home page has no base address, as on the card. */
+    if (onewww_page_parse(html, length, NULL, internal ? NULL : argv[2], internal) != 0) return 2;
     {   /* ONEWWW_CSS: files for the linked sheets, in order, ';' between */
         char *list = getenv("ONEWWW_CSS");
         for (unsigned i = 0; list != NULL && i < onewww_page_sheets(); i++) {
@@ -77,6 +79,32 @@ int main(int argc, char **argv)
         }
     }
     if (onewww_page_layout() != 0) return 2;
+    if (getenv("ONEWWW_LIST") != NULL) {    /* the pictures that the page wants */
+        for (unsigned i = 0; i < onewww_page_images(); i++) {
+            if (onewww_page_image_url(i) != NULL) printf("%u %s\n", i, onewww_page_image_url(i));
+        }
+        return 0;
+    }
+    if (getenv("ONEWWW_IMG") != NULL) {     /* files <dir>/<number> */
+        unsigned char *data = malloc(8u << 20);
+        for (unsigned i = 0; i < onewww_page_images(); i++) {
+            char path[512];
+            unsigned char *rgba = NULL;
+            unsigned w = 0, h = 0;
+            size_t n = 0;
+            FILE *f;
+            if (onewww_page_image_url(i) == NULL) continue;
+            snprintf(path, sizeof(path), "%s/%u", getenv("ONEWWW_IMG"), i);
+            f = fopen(path, "rb");
+            if (f != NULL) { n = fread(data, 1, 8u << 20, f); fclose(f); }
+            if (n != 0 && net_image_decode(data, n, &rgba, &w, &h) == 0) {
+                onewww_page_image_data(i, rgba, w, h);
+            } else onewww_page_image_failed(i);
+            free(rgba);
+        }
+        /* The page before stays on the screen while the new one is made. */
+        if (onewww_page_rows() == 0 || onewww_page_layout() != 0) return 4;
+    }
     printf("%u %u %s\n", (unsigned)onewww_page_rows(),
            (unsigned)onewww_link_count(),
            onewww_link_count() ? onewww_link_href(0) : "-");
@@ -128,18 +156,39 @@ def main():
     exe = OUT / "onewww_host.exe"
     sources = ["onewww_render.c", "onewww_dom.c", "onewww_entities.c",
                "onewww_css.c", "onewww_css_colors.c",
-               "onewww_font_data.c", "onewww_home_page.c", "http_core.c"]
+               "onewww_font_data.c", "onewww_home_page.c", "http_core.c",
+               "net_image.c", "../lib/lodepng.c"]
     subprocess.run([gcc, "-std=gnu99", "-O1", "-Wall", "-Wextra", "-I",
                     str(SRC), str(OUT / "main.c")] +
                    [str(SRC / s) for s in sources] + ["-o", str(exe)],
                    check=True, env=env)
     page = sys.argv[1] if len(sys.argv) > 1 else "-"
-    base = sys.argv[2] if len(sys.argv) > 2 else "http://home.invalid/"
+    base = sys.argv[2] if len(sys.argv) > 2 else "-"
     tops = [int(t) for t in sys.argv[3:]] or [0, 384]
     name = "home" if page == "-" else Path(page).stem
     args = [page, base]
     for top in tops:
         args += [str(top), str(OUT / f"{name}{top}.bin")]
+    if page != "-" and os.environ.get("ONEWWW_PICTURES"):
+        # Get the pictures that the page wants, then lay it out with them.
+        import urllib.request
+        folder = OUT / f"img_{name}"
+        folder.mkdir(exist_ok=True)
+        listing = subprocess.run([str(exe), page, base], check=True,
+                                 env=dict(env, ONEWWW_LIST="1"),
+                                 capture_output=True, text=True).stdout
+        for line in listing.splitlines():
+            number, url = line.split(" ", 1)
+            target = folder / number
+            if target.exists():
+                continue
+            try:
+                request = urllib.request.Request(
+                    url, headers={"User-Agent": "Mozilla/5.0 (compatible; test)"})
+                target.write_bytes(urllib.request.urlopen(request, timeout=20).read())
+            except Exception as error:      # a picture that fails stays out
+                print("no picture:", url[:70], error)
+        env["ONEWWW_IMG"] = str(folder)
     result = subprocess.run([str(exe)] + args, check=True, env=env,
                             capture_output=True, text=True).stdout.split()
     rows, links = int(result[0]), int(result[1])

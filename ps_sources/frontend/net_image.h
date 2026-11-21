@@ -23,6 +23,10 @@ enum { NET_IMAGE_E_FORMAT = -120, NET_IMAGE_E_SIZE = -121, NET_IMAGE_E_MEMORY = 
 /* Returns 0 and the output length, or one of the errors above. The image
  * never grows; it keeps its proportions. Transparent pixels become white,
  * or black when the opaque part of the image is light. */
+/* Decodes a PNG, JPEG or GIF to RGBA, 4 bytes for each pixel. The caller
+ * frees *rgba. Returns 0 or one of the errors above. */
+int net_image_decode(const uint8_t *data, size_t length,
+                     unsigned char **rgba, unsigned *width, unsigned *height);
 int net_image_convert(const uint8_t *data, size_t length, unsigned box_w, unsigned box_h,
                       uint8_t out[NET_IMAGE_OUT_MAX], size_t *out_length);
 #endif

@@ -9,6 +9,7 @@
 #include "apple_fb_handoff.h"
 #include "compositor_layout.h"
 #include "http_service.h"
+#include "net_image.h"
 #include "onewww_dom.h"
 #include "onewww_render.h"
 #include "onewww_task.h"
@@ -39,6 +40,13 @@ static const char s_request_headers[] =
     "Accept: text/html,text/plain;q=0.9,*/*;q=0.5\r\n"
     "Accept-Language: en\r\n";
 
+static const char s_image_headers[] =
+    "User-Agent: Mozilla/5.0 (compatible; ONEWWW/1.0; Appletini; Apple II)\r\n"
+    "Accept: image/png,image/jpeg,image/gif;q=0.9,*/*;q=0.1\r\n";
+
+static void task_stop(void);
+static int body_add(const uint8_t *piece, size_t n, size_t limit);
+
 static uint8_t s_fields[ONEWWW_FIELDS_BYTES];
 static struct {
     uint8_t mode, dirty, release, owner, push, pointer, buttons;
@@ -50,6 +58,10 @@ static struct {
     unsigned sheet;                 /* style sheet in work */
     uint8_t sheet_loading, sheet_loads;
     uint64_t sheet_started;
+    /* Pictures: they come after the page shows. */
+    uint8_t image_active, image_loading, image_loads;
+    unsigned image, image_new;
+    uint64_t image_started, image_laid;
     uint32_t top, restore_top;
     int32_t selected, px, py;
     char url[HTTP_URL_MAX];         /* the shown page; "" is the home page */
@@ -167,6 +179,8 @@ static void go(const char *url, int push)
     char *hash;
     int result;
 
+    task_stop();
+    s.image_active = 0U; s.image_loading = 0U;
     if (s.owner) { owner_drop(); if (s.owner) { say("The network is busy. Try again."); return; } }
     if (url[0] == '\0') { s.pending[0] = '\0'; }
     snprintf(full, sizeof(full), "%s%s",
@@ -448,6 +462,102 @@ static void layout_task(void)
                  (unsigned)s.done.status);
         say(text);
     }
+    s.image_active = onewww_page_images() != 0U;
+    s.image = 0U; s.image_new = 0U; s.image_loads = 0U; s.image_loading = 0U;
+    s.image_laid = now_us();
+}
+
+/* ---- Pictures ------------------------------------------------------------
+ * The page shows first, with a text in place of each picture. Then the
+ * card gets the pictures one at a time and lays the page out again. */
+
+#define IMAGE_MAX   (3U * 1024U * 1024U)    /* one picture file */
+#define IMAGE_US    12000000ULL             /* time for one picture */
+#define IMAGE_LOADS 60U                     /* pictures fetched for one page */
+#define IMAGE_LAY_US 2500000ULL             /* new layout at most this often */
+
+static void relayout_task(void)
+{
+    /* Keep the place in the text: a link near the top is the mark. */
+    const int mark = onewww_link_near(s.top);
+    const uint32_t before = mark >= 0 ? onewww_link_row((uint32_t)mark) : UINT32_MAX;
+
+    s.slice_start = now_us();
+    if (onewww_page_layout() == 0 && before != UINT32_MAX && s.top != 0U) {
+        const uint32_t after = onewww_link_row((uint32_t)mark);
+        if (after != UINT32_MAX) {
+            const int32_t top = (int32_t)s.top + (int32_t)after - (int32_t)before;
+            s.top = (uint32_t)(top < 0 ? 0 : top > top_max() ? top_max() : top);
+        }
+    }
+    if ((int32_t)s.top > top_max()) s.top = (uint32_t)top_max();
+    s.abort = 0U;
+    s.image_new = 0U; s.image_laid = now_us(); s.dirty = 1U;
+}
+
+static void images_poll(void)
+{
+    uint8_t piece[4096];
+    http_status_t status;
+    size_t n;
+
+    if (s.image_loading) {
+        int done = 0;
+        if (http_service_getowner() != HTTP_OWNER_WWW) {
+            s.owner = 0U; done = 1;
+            onewww_page_image_failed(s.image);
+        } else {
+            http_service_status(&status);
+            if (status.status != s.body_status) { s.body_status = status.status; s.body_length = 0U; }
+            while ((n = http_service_read_owned(HTTP_OWNER_WWW, piece, sizeof(piece))) != 0U) {
+                (void)body_add(piece, n, IMAGE_MAX);
+            }
+            http_service_status(&status);
+            if (status.state == HTTP_S_DONE && status.buffered == 0U) {
+                unsigned char *rgba = NULL;
+                unsigned w = 0, h = 0;
+                if (status.status >= 200U && status.status < 300U && s.body_length != 0U &&
+                    net_image_decode(s.body, s.body_length, &rgba, &w, &h) == 0) {
+                    onewww_page_image_data(s.image, rgba, w, h);
+                    s.image_new++;
+                } else {
+                    onewww_page_image_failed(s.image);
+                }
+                free(rgba);
+                done = 1;
+            } else if (status.state == HTTP_S_FAILED ||
+                       now_us() - s.image_started > IMAGE_US) {
+                onewww_page_image_failed(s.image);
+                done = 1;
+            }
+        }
+        if (!done) return;
+        owner_drop();
+        body_free();
+        s.image_loading = 0U; s.image++; s.dirty = 1U;
+    }
+    if (s.owner) { owner_drop(); if (s.owner) return; }
+    for (; s.image < onewww_page_images(); s.image++) {
+        const char *url = onewww_page_image_url(s.image);
+        http_request_t request = { url, "GET", s_image_headers, NULL, 0, 0 };
+        if (url == NULL) continue;
+        if (s.image_new != 0U && now_us() - s.image_laid > IMAGE_LAY_US) break;
+        if (s.image_loads >= IMAGE_LOADS ||
+            http_service_start_owned(&request, HTTP_OWNER_WWW) != 0) {
+            onewww_page_image_failed(s.image);
+            continue;
+        }
+        s.owner = 1U; s.image_loading = 1U; s.image_loads++;
+        s.image_started = now_us(); s.body_status = 0U; s.dirty = 1U;
+        body_free();
+        return;
+    }
+    if (s.image_new != 0U) {            /* show what came */
+        s.abort = 0U;
+        onewww_task_start(relayout_task);
+        return;
+    }
+    if (s.image >= onewww_page_images()) { s.image_active = 0U; s.dirty = 1U; }
 }
 
 static int body_add(const uint8_t *piece, size_t n, size_t limit)
@@ -590,7 +700,7 @@ static void publish(uint32_t mode)
 
 static void present(void)
 {
-    char left[HTTP_URL_MAX + 64U], right[24];
+    char left[HTTP_URL_MAX + 64U], right[48];
     const int32_t limit = top_max();
     int hover = -1;
 
@@ -618,8 +728,15 @@ static void present(void)
         snprintf(left, sizeof(left), "%s%s%s", title,
                  title[0] != '\0' && s.url[0] != '\0' ? " - " : "", s.url);
     }
-    snprintf(right, sizeof(right), "%ld%%",
-             limit > 0 ? (long)((int64_t)s.top * 100 / limit) : 100L);
+    if (s.image_active) {
+        snprintf(right, sizeof(right), "pictures %u/%u   %ld%%",
+                 s.image < onewww_page_images() ? s.image + 1U : onewww_page_images(),
+                 onewww_page_images(),
+                 limit > 0 ? (long)((int64_t)s.top * 100 / limit) : 100L);
+    } else {
+        snprintf(right, sizeof(right), "%ld%%",
+                 limit > 0 ? (long)((int64_t)s.top * 100 / limit) : 100L);
+    }
     onewww_compose(s.top, left, right, s.selected,
                    s.pointer ? (int)s.px : -1, (int)s.py, s_fields);
     /* The staging area is not cached: no flush is necessary. */
@@ -630,14 +747,16 @@ static void present(void)
 
 void onewww_poll(void)
 {
-    if (s.owner && s.mode != M_LOADING && s.mode != M_SHEETS) owner_drop();
+    if (s.owner && s.mode != M_LOADING && s.mode != M_SHEETS && !s.image_loading) owner_drop();
     if (s.mode == M_LOADING) load_poll();
     if (s.mode == M_SHEETS && !onewww_task_active()) sheets_poll();
+    if (s.image_active && (s.mode == M_VIEW || s.mode == M_INPUT) &&
+        !onewww_task_active()) images_poll();
     if (onewww_task_active()) {
         s.slice_start = now_us();
         if (onewww_task_resume()) {
             /* Show the page while it grows. */
-            if (now_us() - s.grow_shown >= GROW_US) {
+            if (s.mode == M_LAYOUT && now_us() - s.grow_shown >= GROW_US) {
                 s.grow_shown = now_us(); s.dirty = 1U;
             }
         } else {
@@ -701,6 +820,17 @@ static void key_view(uint8_t code)
     case 'R': s.restore_top = s.top; go(s.url, 0); break;
     case 'H': go("", 1); break;
     case 'Q': onewww_reset(); break;
+    case 0x1B:                          /* stop the pictures */
+        if (s.image_active) {
+            if (s.image_loading) { owner_drop(); body_free(); s.image_loading = 0U; }
+            s.image_active = 0U;
+            if (s.image_new != 0U && !onewww_task_active()) {
+                s.abort = 0U;
+                onewww_task_start(relayout_task);
+            }
+            s.dirty = 1U;
+        }
+        break;
     default: break;
     }
 }
@@ -783,7 +913,8 @@ uint8_t onewww_control(const uint8_t *payload, uint16_t length)
         task_stop();
         if (s.owner) owner_drop();
         body_free();
-        s.sheet_loading = 0U;
+        s.sheet_loading = 0U; s.image_active = 0U; s.image_loading = 0U;
+        onewww_pause = layout_pause;
         s.release = 0U; s.history_count = 0U; s.pointer = 0U; s.message[0] = '\0';
         show_home();
         if (onewww_page_rows() == 0U) { s.mode = M_CLOSED; return SP_BUSY; }
@@ -834,6 +965,7 @@ void onewww_reset(void)
 {
     if (s.mode == M_CLOSED) return;
     task_stop();
+    s.image_active = 0U; s.image_loading = 0U;
     owner_drop();
     body_free();
     onewww_page_free();

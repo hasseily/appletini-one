@@ -41,6 +41,23 @@ unsigned onewww_page_sheets(void);
 const char *onewww_page_sheet_url(unsigned sheet);
 void onewww_page_sheet_text(unsigned sheet, const char *text, size_t length);
 int onewww_page_layout(void);
+/* Pictures. The layout notes each picture that the page shows:
+ * onewww_page_images() of them. onewww_page_image_url() gives the address
+ * of a picture that the caller must get, or NULL (it came, or it failed).
+ * The caller decodes it and gives the pixels (RGBA, 4 bytes each; they
+ * are copied), or reports a failure. Then it calls onewww_page_layout()
+ * again: the page is laid out with the pictures that came. During that
+ * layout the screen functions (rows, links, compose) give the layout
+ * before, so the picture on the screen does not flicker. */
+unsigned onewww_page_images(void);
+const char *onewww_page_image_url(unsigned image);
+void onewww_page_image_data(unsigned image, const uint8_t *rgba,
+                            unsigned width, unsigned height);
+void onewww_page_image_failed(unsigned image);
+/* The link that is nearest to a page row, or -1: a mark to keep the place
+ * in the text when a new layout moves the rows. */
+int onewww_link_near(uint32_t row);
+
 /* Both steps, without linked sheets. */
 int onewww_page_build(const uint8_t *html, size_t length,
                       const char *content_type, const char *base_url,

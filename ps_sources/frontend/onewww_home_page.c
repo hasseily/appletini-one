@@ -56,5 +56,8 @@ const char onewww_home_page[] =
 "<small>This is small text.</small> Accents and signs: caf&eacute;, "
 "na&iuml;ve, gar&ccedil;on, Stra&szlig;e, &copy; 2026, 20 &euro;, "
 "&ldquo;quotes&rdquo; and a dash &mdash; here.</p>"
-"<p class=\"note\"><small>Pictures of web pages and forms are not in this "
-"version.</small></p>";
+"<p>A page shows first with a text in place of each picture. The pictures "
+"come after that; Escape stops them. A large picture has rows of its own "
+"with sixteen colours. A picture at the side of text shows in grey "
+"levels.</p>"
+"<p class=\"note\"><small>Forms are not in this version.</small></p>";

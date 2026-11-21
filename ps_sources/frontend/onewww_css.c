@@ -17,9 +17,12 @@ enum {
     P_DISPLAY, P_COLOR, P_BACKGROUND, P_BOLD, P_ITALIC, P_FONT_SIZE, P_MONO,
     P_ALIGN, P_UNDERLINE, P_WHITE_SPACE, P_LIST_NONE,
     P_MARGIN_TOP, P_MARGIN_RIGHT, P_MARGIN_BOTTOM, P_MARGIN_LEFT,
-    P_PADDING_TOP, P_PADDING_RIGHT, P_PADDING_BOTTOM, P_PADDING_LEFT
+    P_PADDING_TOP, P_PADDING_RIGHT, P_PADDING_BOTTOM, P_PADDING_LEFT,
+    P_WIDTH, P_MAX_WIDTH, P_FLOAT, P_CLEAR, P_FLEX_COLUMN,
+    P_BORDER_TOP, P_BORDER_RIGHT, P_BORDER_BOTTOM, P_BORDER_LEFT
 };
-enum { U_NONE, U_PX, U_EM };            /* lengths: 1/64 pixel or 1/64 em */
+/* Lengths: 1/64 pixel, 1/64 em, or a percentage. U_AUTO: an auto margin. */
+enum { U_NONE, U_PX, U_EM, U_PERCENT, U_AUTO };
 enum { WS_NORMAL, WS_PRE, WS_NOWRAP };
 
 typedef struct {
@@ -353,8 +356,36 @@ static void put_length(decls_t *d, uint8_t prop, const token_t *t)
     uint8_t unit;
     int32_t value;
 
-    if (word_is(t->p, t->n, "auto")) put(d, prop, U_PX, 0);
+    if (word_is(t->p, t->n, "auto")) put(d, prop, U_AUTO, 0);
     else if (length(t->p, t->n, &unit, &value)) put(d, prop, unit, value);
+}
+
+/* width and max-width: a length or a percentage. */
+static void put_size(decls_t *d, uint8_t prop, const token_t *t)
+{
+    uint8_t unit;
+    int32_t value;
+    const char *q = t->p;
+
+    if (t->n > 1U && t->p[t->n - 1U] == '%') {
+        if (number(&q, t->p + t->n - 1U, &value) && value > 0) {
+            put(d, prop, U_PERCENT, value / 64);
+        }
+    } else if (length(t->p, t->n, &unit, &value) && value > 0) {
+        put(d, prop, unit, value);
+    } else if (word_is(t->p, t->n, "auto") || word_is(t->p, t->n, "none")) {
+        put(d, prop, U_PX, 0);
+    }
+}
+
+/* A border side shows when its value names a line style and no zero width. */
+static int border_shows(const char *v, size_t n)
+{
+    if (has(v, n, "none") || has(v, n, "hidden")) return 0;
+    if (n != 0U && v[0] == '0' && (n == 1U || is_space(v[1]) || v[1] == 'p')) return 0;
+    return has(v, n, "solid") || has(v, n, "dashed") || has(v, n, "dotted") ||
+           has(v, n, "double") || has(v, n, "groove") || has(v, n, "ridge") ||
+           has(v, n, "inset") || has(v, n, "outset");
 }
 
 /* margin and padding: 1 to 4 values, in the order top right bottom left. */
@@ -430,6 +461,7 @@ static void declaration(decls_t *d, const char *name, size_t name_n,
                  word_is(v, n, "inline-flex") || word_is(v, n, "inline-grid") ||
                  word_is(v, n, "contents") || word_is(v, n, "inline-table")) value = OW_D_INLINE;
         else if (word_is(v, n, "list-item")) value = OW_D_LIST_ITEM;
+        else if (word_is(v, n, "flex") || word_is(v, n, "inline-flex")) value = OW_D_FLEX;
         put(d, P_DISPLAY, U_NONE, value);
     } else if (word_is(name, name_n, "visibility")) {
         if (word_is(v, n, "hidden") || word_is(v, n, "collapse")) put(d, P_DISPLAY, U_NONE, OW_D_NONE);
@@ -518,6 +550,36 @@ static void declaration(decls_t *d, const char *name, size_t name_n,
         uint8_t unit;
         int32_t value;
         if (length(t[0].p, t[0].n, &unit, &value) && unit == U_PX && value <= 64) d->tiny = 1U;
+        else if (name[0] == 'w') put_size(d, P_WIDTH, &t[0]);
+    } else if (word_is(name, name_n, "max-width")) {
+        put_size(d, P_MAX_WIDTH, &t[0]);
+    } else if (word_is(name, name_n, "float")) {
+        put(d, P_FLOAT, U_NONE, word_is(v, n, "left") ? OW_FLOAT_LEFT :
+            word_is(v, n, "right") ? OW_FLOAT_RIGHT : OW_FLOAT_NONE);
+    } else if (word_is(name, name_n, "clear")) {
+        put(d, P_CLEAR, U_NONE, word_is(v, n, "left") ? OW_SIDE_LEFT :
+            word_is(v, n, "right") ? OW_SIDE_RIGHT :
+            word_is(v, n, "none") ? 0 : OW_SIDE_LEFT | OW_SIDE_RIGHT);
+    } else if (word_is(name, name_n, "flex-direction") || word_is(name, name_n, "flex-flow")) {
+        put(d, P_FLEX_COLUMN, U_NONE, has(v, n, "column"));
+    } else if (word_is(name, name_n, "border") || word_is(name, name_n, "border-style")) {
+        const int shows = name_n == 6U ? border_shows(v, n) :
+                          !(has(v, n, "none") || has(v, n, "hidden"));
+        if (name_n == 6U || !shows) {
+            for (uint8_t side = 0; side < 4U; side++) put(d, (uint8_t)(P_BORDER_TOP + side), U_NONE, shows);
+        }
+    } else if (word_is(name, name_n, "border-top")) {
+        put(d, P_BORDER_TOP, U_NONE, border_shows(v, n));
+    } else if (word_is(name, name_n, "border-right")) {
+        put(d, P_BORDER_RIGHT, U_NONE, border_shows(v, n));
+    } else if (word_is(name, name_n, "border-bottom")) {
+        put(d, P_BORDER_BOTTOM, U_NONE, border_shows(v, n));
+    } else if (word_is(name, name_n, "border-left")) {
+        put(d, P_BORDER_LEFT, U_NONE, border_shows(v, n));
+    } else if (word_is(name, name_n, "border-width")) {
+        if (word_is(v, n, "0") || word_is(v, n, "0px")) {
+            for (uint8_t side = 0; side < 4U; side++) put(d, (uint8_t)(P_BORDER_TOP + side), U_NONE, 0);
+        }
     } else if (word_is(name, name_n, "overflow")) {
         if (has(v, n, "hidden")) d->overflow = 1U;
     }
@@ -1037,9 +1099,23 @@ static void collect(const rule_t *rule, const onewww_node_t *e,
 
 /* ---- Cascade ----------------------------------------------------------- */
 
+static int16_t to_size(const decl_t *d, int font_px)
+{
+    int32_t v;
+    if (d->unit == U_PERCENT) return (int16_t)(d->value > 100 ? -100 : -d->value);
+    v = d->unit == U_EM ? d->value * font_px / 64 : d->value / 64;
+    return (int16_t)(v > 4000 ? 4000 : v < 0 ? 0 : v);
+}
+
+static void set_side(uint8_t *sides, uint8_t side, int on)
+{
+    *sides = (uint8_t)(on ? *sides | side : *sides & ~side);
+}
+
 static int16_t to_pixels(const decl_t *d, int font_px, int limit)
 {
-    int32_t v = d->unit == U_EM ? d->value * font_px / 64 : d->value / 64;
+    int32_t v = d->unit == U_EM ? d->value * font_px / 64 :
+                (d->unit == U_AUTO || d->unit == U_PERCENT) ? 0 : d->value / 64;
     if (v < 0) v = 0;
     if (v > limit) v = limit;
     return (int16_t)v;
@@ -1070,8 +1146,23 @@ static void apply(onewww_style_t *s, int parent_font, const decl_t *d, int count
         case P_LIST_NONE: s->list_none = (uint8_t)d->value; break;
         case P_MARGIN_TOP: s->margin_top = to_pixels(d, s->font_px, 96); break;
         case P_MARGIN_BOTTOM: s->margin_bottom = to_pixels(d, s->font_px, 96); break;
-        case P_MARGIN_LEFT: s->margin_left = to_pixels(d, s->font_px, 240); break;
-        case P_MARGIN_RIGHT: s->margin_right = to_pixels(d, s->font_px, 240); break;
+        case P_MARGIN_LEFT:
+            s->margin_left = to_pixels(d, s->font_px, 240);
+            set_side(&s->margin_auto, OW_SIDE_LEFT, d->unit == U_AUTO);
+            break;
+        case P_MARGIN_RIGHT:
+            s->margin_right = to_pixels(d, s->font_px, 240);
+            set_side(&s->margin_auto, OW_SIDE_RIGHT, d->unit == U_AUTO);
+            break;
+        case P_WIDTH: s->width = to_size(d, s->font_px); break;
+        case P_MAX_WIDTH: s->max_width = to_size(d, s->font_px); break;
+        case P_FLOAT: s->floating = (uint8_t)d->value; break;
+        case P_CLEAR: s->clear = (uint8_t)d->value; break;
+        case P_FLEX_COLUMN: s->flex_column = (uint8_t)d->value; break;
+        case P_BORDER_TOP: set_side(&s->border, OW_SIDE_TOP, d->value); break;
+        case P_BORDER_RIGHT: set_side(&s->border, OW_SIDE_RIGHT, d->value); break;
+        case P_BORDER_BOTTOM: set_side(&s->border, OW_SIDE_BOTTOM, d->value); break;
+        case P_BORDER_LEFT: set_side(&s->border, OW_SIDE_LEFT, d->value); break;
         case P_PADDING_TOP: s->padding_top = to_pixels(d, s->font_px, 96); break;
         case P_PADDING_BOTTOM: s->padding_bottom = to_pixels(d, s->font_px, 96); break;
         case P_PADDING_LEFT: s->padding_left = to_pixels(d, s->font_px, 240); break;
@@ -1092,9 +1183,23 @@ static void hints(onewww_style_t *s, const onewww_node_t *e)
     if (has(e->text, e->length, "align") &&
         (n = onewww_attr(e, "align", value, sizeof(value))) > 0) {
         for (char *q = value; *q != '\0'; q++) *q = (char)lower((unsigned char)*q);
-        if (strcmp(value, "center") == 0 || strcmp(value, "middle") == 0) s->align = OW_ALIGN_CENTER;
+        if (e->tag == OW_TABLE || e->tag == OW_IMG) {
+            /* On a table or a picture, align puts the box at a side. */
+            if (strcmp(value, "right") == 0) s->floating = OW_FLOAT_RIGHT;
+            else if (strcmp(value, "left") == 0) s->floating = OW_FLOAT_LEFT;
+            else if (strcmp(value, "center") == 0) s->margin_auto = OW_SIDE_LEFT | OW_SIDE_RIGHT;
+        } else if (strcmp(value, "center") == 0 || strcmp(value, "middle") == 0) s->align = OW_ALIGN_CENTER;
         else if (strcmp(value, "right") == 0) s->align = OW_ALIGN_RIGHT;
         else if (strcmp(value, "left") == 0) s->align = OW_ALIGN_LEFT;
+    }
+    if (e->tag == OW_TABLE && has(e->text, e->length, "width") &&
+        (n = onewww_attr(e, "width", value, sizeof(value))) > 0) {
+        const char *q = value;
+        int32_t v;
+        if (number(&q, value + n, &v) && v > 0) {
+            v /= 64;
+            s->width = (int16_t)(*q == '%' ? (v > 100 ? -100 : -v) : (v > 4000 ? 4000 : v));
+        }
     }
     if (has(e->text, e->length, "color")) {
         const char *name = e->tag == OW_FONT ? "color" : e->tag == OW_BODY ? "text" : NULL;

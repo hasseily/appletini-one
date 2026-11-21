@@ -68,19 +68,15 @@ static unsigned paper_of(const uint8_t *rgba, size_t pixels)
     return alpha && weighted / alpha >= 160U ? 0U : 255U;
 }
 
-int net_image_convert(const uint8_t *data, size_t length, unsigned box_w, unsigned box_h,
-                      uint8_t out[NET_IMAGE_OUT_MAX], size_t *out_length)
+int net_image_decode(const uint8_t *data, size_t length,
+                     unsigned char **out, unsigned *width, unsigned *height)
 {
     static const uint8_t png_signature[8] = {137, 'P', 'N', 'G', 13, 10, 26, 10};
     unsigned char *rgba = NULL;
-    unsigned w = 0, h = 0, tw, th, row_bytes, paper;
-    int16_t *errors;
-    int result = 0;
+    unsigned w = 0, h = 0;
 
-    if (!data || !out || !out_length || !box_w || !box_h ||
-        box_w > NET_IMAGE_BOX_W_MAX || box_h > NET_IMAGE_BOX_H_MAX) return NET_IMAGE_E_SIZE;
-    *out_length = 0;
-    if (length > NET_IMAGE_ENCODED_MAX) return NET_IMAGE_E_SIZE;
+    *out = NULL;
+    if (!data || length > NET_IMAGE_ENCODED_MAX) return NET_IMAGE_E_SIZE;
     if (length >= 33U && !memcmp(data, png_signature, 8)) {
         if (memcmp(data + 12, "IHDR", 4)) return NET_IMAGE_E_FORMAT;
         if (!size_ok(be32(data + 16), be32(data + 20))) return NET_IMAGE_E_SIZE;
@@ -102,6 +98,23 @@ int net_image_convert(const uint8_t *data, size_t length, unsigned box_w, unsign
         free(rgba);
         return NET_IMAGE_E_SIZE;
     }
+    *out = rgba; *width = w; *height = h;
+    return 0;
+}
+
+int net_image_convert(const uint8_t *data, size_t length, unsigned box_w, unsigned box_h,
+                      uint8_t out[NET_IMAGE_OUT_MAX], size_t *out_length)
+{
+    unsigned char *rgba = NULL;
+    unsigned w = 0, h = 0, tw, th, row_bytes, paper;
+    int16_t *errors;
+    int result = 0;
+
+    if (!data || !out || !out_length || !box_w || !box_h ||
+        box_w > NET_IMAGE_BOX_W_MAX || box_h > NET_IMAGE_BOX_H_MAX) return NET_IMAGE_E_SIZE;
+    *out_length = 0;
+    result = net_image_decode(data, length, &rgba, &w, &h);
+    if (result) return result;
 
     paper = paper_of(rgba, (size_t)w * h);
     tw = w;

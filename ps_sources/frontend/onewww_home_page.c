@@ -3,6 +3,11 @@
 
 const char onewww_home_page[] =
 "<title>ONEWWW home</title>"
+"<style>"
+"h1{background:#137;color:#fff;text-align:center;padding:6px 0;margin:0 0 10px}"
+"th{background:#ddd;text-align:left}"
+".note{color:#555}"
+"</style>"
 "<h1>ONEWWW</h1>"
 "<p>The Appletini card gets each page, puts each word in its place and "
 "draws the letters. The Apple shows the picture and sends your keys and "
@@ -51,5 +56,5 @@ const char onewww_home_page[] =
 "<small>This is small text.</small> Accents and signs: caf&eacute;, "
 "na&iuml;ve, gar&ccedil;on, Stra&szlig;e, &copy; 2026, 20 &euro;, "
 "&ldquo;quotes&rdquo; and a dash &mdash; here.</p>"
-"<p><small>Pictures of web pages, forms and style sheets are not in this "
+"<p class=\"note\"><small>Pictures of web pages and forms are not in this "
 "version.</small></p>";

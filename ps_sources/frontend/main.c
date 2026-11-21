@@ -2468,7 +2468,7 @@ static uint8_t ui_transfer_composite_due(const ui_state_t *ui,
     const uint8_t download = (uint8_t)(
         (cogs_service_active() && config_menu_cogs_active(menu)) ||
         http_service_getowner() == HTTP_OWNER_DOWNLOAD ||
-        net_service_image_active());
+        net_service_image_active() || onewww_busy());
     if (!update && !download) {
         if (throttled != 0U) compositor_request_full_refresh();
         throttled = 0U;

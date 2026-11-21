@@ -29,6 +29,9 @@ MAIN = r'''
 #include <string.h>
 #include "onewww_render.h"
 static unsigned char fields[ONEWWW_FIELDS_BYTES];
+extern int (*onewww_pause)(void);
+static int calls, stop_after;
+static int stop_soon(void) { return ++calls >= stop_after; }
 int main(int argc, char **argv)
 {
     /* argv: html file or "-", base url, then pairs: top, output file */
@@ -42,7 +45,38 @@ int main(int argc, char **argv)
         fclose(f);
         html = data; internal = 0;
     }
-    if (onewww_page_build(html, length, NULL, argv[2], internal) != 0) return 2;
+    /* A stop request in the parser, then in the layout, must leave an
+     * empty page and no damage; the next build must be normal. */
+    for (stop_after = 1; stop_after <= 41; stop_after += 40) {
+        calls = 0;
+        onewww_pause = stop_soon;
+        if (onewww_page_build(html, length, NULL, argv[2], internal) == 0 ||
+            onewww_page_rows() != 0) return 3;
+        onewww_pause = NULL;
+    }
+    if (onewww_page_parse(html, length, NULL, argv[2], internal) != 0) return 2;
+    {   /* ONEWWW_CSS: files for the linked sheets, in order, ';' between */
+        char *list = getenv("ONEWWW_CSS");
+        for (unsigned i = 0; list != NULL && i < onewww_page_sheets(); i++) {
+            char *stop;
+            FILE *f;
+            if (onewww_page_sheet_url(i) == NULL) continue;
+            fprintf(stderr, "sheet %u: %s\n", i, onewww_page_sheet_url(i));
+            if (*list == 0) break;
+            stop = strchr(list, ';');
+            if (stop != NULL) *stop = 0;
+            f = fopen(list, "rb");
+            if (f != NULL) {
+                char *css = malloc(4u << 20);
+                size_t n = fread(css, 1, 4u << 20, f);
+                fclose(f);
+                onewww_page_sheet_text(i, css, n);
+                free(css);
+            }
+            list = stop != NULL ? stop + 1 : list + strlen(list);
+        }
+    }
+    if (onewww_page_layout() != 0) return 2;
     printf("%u %u %s\n", (unsigned)onewww_page_rows(),
            (unsigned)onewww_link_count(),
            onewww_link_count() ? onewww_link_href(0) : "-");
@@ -93,6 +127,7 @@ def main():
     (OUT / "main.c").write_text(MAIN)
     exe = OUT / "onewww_host.exe"
     sources = ["onewww_render.c", "onewww_dom.c", "onewww_entities.c",
+               "onewww_css.c", "onewww_css_colors.c",
                "onewww_font_data.c", "onewww_home_page.c", "http_core.c"]
     subprocess.run([gcc, "-std=gnu99", "-O1", "-Wall", "-Wextra", "-I",
                     str(SRC), str(OUT / "main.c")] +

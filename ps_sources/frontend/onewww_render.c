@@ -1,6 +1,6 @@
-/* ONEWWW page renderer: lays a document tree out with proportional
+/* ONEWWW page renderer: lays a styled document tree out with proportional
  * fonts and draws it into Super Hi-Res rows. Blocks, lists, tables with
- * automatic column widths, links.
+ * automatic column widths, links, colours.
  * No hardware access: the file also compiles on the host. */
 #include "onewww_render.h"
 
@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "http_core.h"
+#include "onewww_css.h"
 #include "onewww_dom.h"
 #include "onewww_font.h"
 
@@ -18,20 +19,23 @@
 #define ROW_CHUNK   512U
 #define MAX_ROWS    60000U
 
-/* Page palettes. A 640-mode row uses colours 0..3 of its palette; the
- * four colour groups of the 640 mode hold the same four colours.
- * A plain text row has paper, two greys and ink: four levels for smooth
- * letter edges. A row with link text (PAL_LINK) has paper, one grey, ink
- * and the link colour. */
-enum { PAL_TEXT = 0, PAL_SHADE, PAL_BANNER, PAL_PICTURE, PAL_BASES };
-#define PAL_LINK 0x80U
+/* Row colours. A 640-mode row shows four colours; the four colour groups
+ * of the 640 mode hold the same four. Each text row has its own paper and
+ * ink. A row with one text colour has two mixed colours between paper and
+ * ink, for smooth letter edges. A row with a second text colour (the
+ * accent, for example a link) has one mixed colour, ink and the accent.
+ * The first text on a row sets its paper and ink. */
+typedef struct {
+    uint16_t paper, ink, accent;        /* 0RGB; accent OW_NO_COLOR: none */
+} rowpal_t;
+
+#define PAL_PICTURE 0xFFFFU             /* a 320-mode row of the picture */
+#define PAL_MAX     2048U
+#define SCB_640     0x80U
+#define SCB_USED    0x01U               /* the row has its colours */
+#define INK_OF_ROW  OW_NO_COLOR         /* draw with the ink of the row */
 enum { LV_LIGHT = 1, LV_DARK = 2, LV_INK = 3 };
 
-static const uint16_t s_text_palettes[3][2][4] = {
-    { { 0x0FFF, 0x0AAA, 0x0555, 0x0000 }, { 0x0FFF, 0x0888, 0x0000, 0x002C } },
-    { { 0x0DDD, 0x0999, 0x0444, 0x0000 }, { 0x0DDD, 0x0777, 0x0000, 0x002C } },
-    { { 0x0137, 0x067A, 0x0ABD, 0x0FFF }, { 0x0137, 0x067A, 0x0ABD, 0x0FFF } },
-};
 static const uint16_t s_picture_palette[16] = {
     0x0000, 0x0113, 0x0226, 0x034A, 0x047D, 0x07AF, 0x0FFF, 0x0FE8,
     0x0FB3, 0x0F71, 0x0C32, 0x0713, 0x0141, 0x0272, 0x04A4, 0x0888,
@@ -39,8 +43,8 @@ static const uint16_t s_picture_palette[16] = {
 
 typedef struct {
     uint8_t *px;
-    uint8_t *scb;       /* 0x80 = 640 mode, 0 = 320 mode */
-    uint8_t *pal;
+    uint8_t *scb;       /* SCB_640 and SCB_USED */
+    uint16_t *pal;      /* index in s_pal, or PAL_PICTURE */
     uint32_t rows;
     uint32_t cap;
     uint8_t fixed;
@@ -49,12 +53,43 @@ typedef struct {
 static surface_t s_page;
 static uint8_t s_status_px[ONEWWW_STATUS_ROWS * ROW_BYTES];
 static uint8_t s_status_scb[ONEWWW_STATUS_ROWS];
-static uint8_t s_status_pal[ONEWWW_STATUS_ROWS];
+static uint16_t s_status_pal[ONEWWW_STATUS_ROWS];
+
+/* Entry 0 is the page: its paper and ink are those of <body>. */
+static rowpal_t s_pal[PAL_MAX] = { { 0x0FFF, 0x0000, OW_NO_COLOR } };
+static uint32_t s_pals = 1U;
+
+static int color_distance(uint16_t a, uint16_t b)
+{
+    const int dr = (int)((a >> 8) & 15) - (int)((b >> 8) & 15);
+    const int dg = (int)((a >> 4) & 15) - (int)((b >> 4) & 15);
+    const int db = (int)(a & 15) - (int)(b & 15);
+    return (dr < 0 ? -dr : dr) + (dg < 0 ? -dg : dg) + (db < 0 ? -db : db);
+}
+
+static uint16_t pal_get(uint16_t paper, uint16_t ink, uint16_t accent)
+{
+    uint32_t best = 0U;
+    int best_d = 1 << 30;
+
+    for (uint32_t i = s_pals; i-- > 0U;) {       /* new entries are likely */
+        const rowpal_t *p = &s_pal[i];
+        int d;
+        if (p->paper == paper && p->ink == ink && p->accent == accent) return (uint16_t)i;
+        d = color_distance(p->paper, paper) * 4 + color_distance(p->ink, ink) +
+            (p->accent == accent ? 0 : 2);
+        if (d < best_d) { best_d = d; best = i; }
+    }
+    if (s_pals == PAL_MAX) return (uint16_t)best;
+    s_pal[s_pals].paper = paper; s_pal[s_pals].ink = ink; s_pal[s_pals].accent = accent;
+    return (uint16_t)s_pals++;
+}
 
 static int surface_need(surface_t *s, uint32_t rows)
 {
     uint32_t cap;
-    uint8_t *px, *scb, *pal;
+    uint8_t *px, *scb;
+    uint16_t *pal;
 
     if (rows <= s->rows) return 0;
     if (rows > s->cap) {
@@ -66,15 +101,15 @@ static int surface_need(surface_t *s, uint32_t rows)
         scb = realloc(s->scb, cap);
         if (scb == NULL) return -1;
         s->scb = scb;
-        pal = realloc(s->pal, cap);
+        pal = realloc(s->pal, (size_t)cap * sizeof(uint16_t));
         if (pal == NULL) return -1;
         s->pal = pal;
         s->cap = cap;
     }
     memset(s->px + (size_t)s->rows * ROW_BYTES, 0,
            (size_t)(rows - s->rows) * ROW_BYTES);
-    memset(s->scb + s->rows, 0x80, rows - s->rows);
-    memset(s->pal + s->rows, PAL_TEXT, rows - s->rows);
+    memset(s->scb + s->rows, SCB_640, rows - s->rows);
+    memset(s->pal + s->rows, 0, (size_t)(rows - s->rows) * sizeof(uint16_t));
     s->rows = rows;
     return 0;
 }
@@ -90,57 +125,63 @@ static void put640(surface_t *s, int x, int y, uint8_t colour)
     *p = (uint8_t)((*p & ~(3U << shift)) | ((unsigned)colour << shift));
 }
 
-/* Draws one pixel at a coverage level 1..3 in the palette of its row. */
-static void put_level(surface_t *s, int x, int y, unsigned level, int link)
+/* Gives a row its colours when it has none. */
+static void row_claim(surface_t *s, int y, uint16_t paper, uint16_t ink)
 {
-    if (y < 0 || (uint32_t)y >= s->rows) return;
-    if ((s->pal[y] & PAL_LINK) != 0U) {
-        level = level == LV_INK ? (link ? 3U : 2U) : 1U;
+    if (y < 0 || (uint32_t)y >= s->rows || (s->scb[y] & SCB_USED) != 0U ||
+        s->pal[y] == PAL_PICTURE) return;
+    s->pal[y] = pal_get(paper, ink, OW_NO_COLOR);
+    s->scb[y] |= SCB_USED;
+}
+
+/* Returns the pixel values of a row for the coverage levels 1..3 of a
+ * text colour, or NULL for a row that cannot take text. A row with one
+ * text colour changes to a row with an accent when a second one comes. */
+static const uint8_t *row_map(surface_t *s, int y, uint16_t colour,
+                              uint16_t paper)
+{
+    static const uint8_t plain[4] = { 0U, 1U, 2U, 3U };
+    static const uint8_t as_ink[4] = { 0U, 1U, 1U, 2U };
+    static const uint8_t as_accent[4] = { 0U, 1U, 1U, 3U };
+    const rowpal_t *p;
+
+    if (y < 0 || (uint32_t)y >= s->rows || s->pal[y] == PAL_PICTURE) return NULL;
+    row_claim(s, y, paper, colour == INK_OF_ROW ? s_pal[0].ink : colour);
+    p = &s_pal[s->pal[y]];
+    if (p->accent == OW_NO_COLOR) {
+        uint8_t *row;
+        if (colour == INK_OF_ROW || colour == p->ink) return plain;
+        row = s->px + (size_t)y * ROW_BYTES;
+        for (unsigned i = 0; i < ROW_BYTES; i++) {      /* keep the pixels */
+            const uint8_t v = row[i];
+            if (v != 0U) {
+                row[i] = (uint8_t)((as_ink[v >> 6] << 6) | (as_ink[(v >> 4) & 3U] << 4) |
+                                   (as_ink[(v >> 2) & 3U] << 2) | as_ink[v & 3U]);
+            }
+        }
+        s->pal[y] = pal_get(p->paper, p->ink, colour);
+        return as_accent;
     }
-    put640(s, x, y, (uint8_t)level);
+    if (colour == INK_OF_ROW || colour == p->ink) return as_ink;
+    if (colour == p->accent) return as_accent;
+    return color_distance(colour, p->accent) < color_distance(colour, p->ink) ?
+           as_accent : as_ink;
 }
 
 static void hline(surface_t *s, int x0, int x1, int y, unsigned level,
-                  int link)
+                  uint16_t colour, uint16_t paper)
 {
-    for (int x = x0; x < x1; x++) put_level(s, x, y, level, link);
+    const uint8_t *map = row_map(s, y, colour, paper);
+    if (map == NULL) return;
+    for (int x = x0; x < x1; x++) put640(s, x, y, map[level]);
 }
 
-static void vline(surface_t *s, int x, int y0, int y1, unsigned level)
-{
-    for (int y = y0; y < y1; y++) put_level(s, x, y, level, 0);
-}
-
-static void set_palette(surface_t *s, int y0, int y1, uint8_t base)
+static void vline(surface_t *s, int x, int y0, int y1, unsigned level,
+                  uint16_t paper)
 {
     for (int y = y0; y < y1; y++) {
-        if (y >= 0 && (uint32_t)y < s->rows) {
-            s->pal[y] = (uint8_t)(base | (base == PAL_BANNER ? 0U :
-                                          (s->pal[y] & PAL_LINK)));
-        }
-    }
-}
-
-/* Changes plain text rows to the link palette and keeps their pixels:
- * the two greys become the one grey, ink stays ink. */
-static void rows_link(surface_t *s, int y0, int y1)
-{
-    static const uint8_t map[4] = { 0U, 1U, 1U, 2U };
-
-    for (int y = y0; y < y1; y++) {
-        uint8_t *row;
-        if (y < 0 || (uint32_t)y >= s->rows || s->scb[y] != 0x80U ||
-            s->pal[y] == PAL_BANNER || (s->pal[y] & PAL_LINK) != 0U) continue;
-        row = s->px + (size_t)y * ROW_BYTES;
-        for (unsigned i = 0; i < ROW_BYTES; i++) {
-            const uint8_t v = row[i];
-            if (v != 0U) {
-                row[i] = (uint8_t)((map[v >> 6] << 6) |
-                                   (map[(v >> 4) & 3U] << 4) |
-                                   (map[(v >> 2) & 3U] << 2) | map[v & 3U]);
-            }
-        }
-        s->pal[y] |= PAL_LINK;
+        const uint8_t *map = row_map(s, y, INK_OF_ROW, paper);
+        if (map != NULL) put640(s, x, y, map[level]);
     }
 }
 
@@ -161,20 +202,20 @@ static const onewww_glyph_t *glyph_find(const onewww_font_t *f, uint16_t code)
 }
 
 static int glyph_draw(surface_t *s, const onewww_font_t *f, uint16_t code,
-                      int x, int top, int link)
+                      int x, int top, uint16_t colour, uint16_t paper)
 {
     const onewww_glyph_t *g = glyph_find(f, code);
     const uint8_t *bits = f->bits + g->offset;
     const unsigned stride = ((unsigned)g->w + 3U) >> 2;
 
     for (unsigned gy = 0; gy < g->h; gy++) {
+        const int y = top + g->y + (int)gy;
+        const uint8_t *map = row_map(s, y, colour, paper);
+        if (map == NULL) continue;
         for (unsigned gx = 0; gx < g->w; gx++) {
             const unsigned level =
                 (bits[gy * stride + (gx >> 2)] >> (6U - 2U * (gx & 3U))) & 3U;
-            if (level != 0U) {
-                put_level(s, x + g->x + (int)gx, top + g->y + (int)gy,
-                          level, link);
-            }
+            if (level != 0U) put640(s, x + g->x + (int)gx, y, map[level]);
         }
     }
     return g->advance;
@@ -185,6 +226,15 @@ static int text_width(const onewww_font_t *f, const uint16_t *cp, unsigned n)
     int w = 0;
     while (n-- != 0U) w += glyph_find(f, *cp++)->advance;
     return w;
+}
+
+/* Text that is too near to the colour of its paper cannot be read. */
+static uint16_t readable(uint16_t colour, uint16_t paper)
+{
+    const int light = (int)((paper >> 8) & 15) * 3 + (int)((paper >> 4) & 15) * 6 +
+                      (int)(paper & 15);
+    if (color_distance(colour, paper) >= 8) return colour;
+    return light > 75 ? 0x0000 : 0x0FFF;
 }
 
 /* ---- Page data --------------------------------------------------------- */
@@ -297,12 +347,14 @@ static void doc_free(void)
 #define LINE_CODES 1024U
 #define LINE_ITEMS 160U
 #define MARKER_MAX 8U
+#define NO_GAP     10000    /* the start of a column: no margin above */
 
 typedef struct {
     uint16_t start, count;
     int16_t x, w;
     int32_t link;       /* -1: not a link */
-    uint8_t font;
+    uint16_t colour;
+    uint8_t font, underline;
 } item_t;
 
 typedef struct {
@@ -317,35 +369,38 @@ typedef struct {
 
 /* Text properties that an element gives to its content. */
 typedef struct {
-    uint8_t bold, italic, mono, small, pre;
-    uint8_t font_block;         /* heading font, or 0 */
+    uint16_t colour;
+    uint8_t font, underline, pre, nowrap;
     uint8_t list;               /* 1 = bullets, 2 = numbers */
     int *counter;               /* number of the next <li> */
     int32_t link;
-} style_t;
+} text_t;
 
 /* One column of text: the page, or a table cell. */
 typedef struct {
     surface_t *s;               /* NULL: measure only */
     line_t *line;
     int x0, w, y;
-    int indent;
+    int indent, right;          /* space taken off the left and the right */
     int max_w;                  /* widest line */
     int max_word;               /* widest word */
     int depth;                  /* table nesting */
+    int gap;                    /* margin rows after the last text */
+    uint16_t paper;
     uint16_t marker[MARKER_MAX];
+    uint16_t marker_colour;
     uint8_t marker_len;
-    uint8_t centre, gap, top_level, row_pal;
+    uint8_t align, top_level;
 } flow_t;
 
-static const style_t s_plain = { 0, 0, 0, 0, 0, 0, 0, NULL, -1 };
+static const text_t s_plain = { 0x0000, ONEWWW_FONT_BODY, 0, 0, 0, 0, NULL, -1 };
 
-static uint8_t style_font(const style_t *st)
+/* Set when onewww_pause asks to stop. The walk then ends quickly. */
+static uint8_t s_abort;
+
+static void pause_point(void)
 {
-    if (st->font_block != 0U) return st->font_block;
-    if (st->mono) return ONEWWW_FONT_MONO;
-    if (st->small) return ONEWWW_FONT_SMALL;
-    return (uint8_t)(ONEWWW_FONT_BODY + (st->bold ? 1 : 0) + (st->italic ? 2 : 0));
+    if (!s_abort && onewww_pause != NULL && onewww_pause()) s_abort = 1U;
 }
 
 static void line_reset(line_t *l)
@@ -356,10 +411,14 @@ static void line_reset(line_t *l)
 static void flow_flush(flow_t *f, int force)
 {
     line_t *l = f->line;
+    const int avail = f->w - f->indent - f->right;
     int ascent = 0, descent = 0, shift = 0, top, height;
 
     if (l->items == 0U && !force) { l->space = 0U; return; }
-    if (l->width + f->indent > f->max_w) f->max_w = l->width + f->indent;
+    pause_point();
+    if (l->width + f->indent + f->right > f->max_w) {
+        f->max_w = l->width + f->indent + f->right;
+    }
     if (l->items == 0U) {
         ascent = onewww_fonts[ONEWWW_FONT_BODY].ascent;
         descent = onewww_fonts[ONEWWW_FONT_BODY].descent;
@@ -371,27 +430,43 @@ static void flow_flush(flow_t *f, int force)
     }
     height = ascent + descent + 2;
     top = f->y + 1;
-    f->gap = 0U;
+    f->gap = 0;
     if (f->s == NULL || surface_need(f->s, (uint32_t)(f->y + height)) != 0) {
         f->y += height; f->marker_len = 0U;
         line_reset(l);
         return;
     }
-    if (f->top_level && f->row_pal != PAL_TEXT) {
-        set_palette(f->s, f->y, f->y + height, f->row_pal);
-    }
-    for (unsigned i = 0; i < l->items; i++) {
-        if (l->item[i].link >= 0) { rows_link(f->s, f->y, f->y + height); break; }
-    }
-    if (f->centre) shift = (f->w - f->indent - l->width) / 2;
+    if (f->align == OW_ALIGN_CENTER) shift = (avail - l->width) / 2;
+    else if (f->align == OW_ALIGN_RIGHT) shift = avail - l->width;
     if (shift < 0) shift = 0;
+    {
+        /* The rows of the line take the paper of the block. Their ink is
+         * the text colour that covers the most width. */
+        uint16_t colour[4], ink = s_pal[0].ink;
+        int width[4], colours = 0, best = -1;
+        for (unsigned i = 0; i < l->items; i++) {
+            int k = 0;
+            while (k < colours && colour[k] != l->item[i].colour) k++;
+            if (k == colours) {
+                if (colours == 4) continue;
+                colour[colours] = l->item[i].colour; width[colours++] = 0;
+            }
+            width[k] += l->item[i].w;
+        }
+        for (int k = 0; k < colours; k++) {
+            if (best < 0 || width[k] > width[best]) best = k;
+        }
+        if (best >= 0) ink = colour[best];
+        for (int y = f->y; y < f->y + height; y++) {
+            row_claim(f->s, y, f->paper, readable(ink, f->paper));
+        }
+    }
     if (f->marker_len != 0U) {
         const onewww_font_t *font = &onewww_fonts[ONEWWW_FONT_BODY];
-        int x = f->x0 + f->indent - 6 -
-                text_width(font, f->marker, f->marker_len);
-        for (unsigned k = 0; k < f->marker_len; k++) {
-            x += glyph_draw(f->s, font, f->marker[k], x,
-                            top + ascent - font->ascent, 0);
+        int x = f->x0 + f->indent - 6 - text_width(font, f->marker, f->marker_len);
+        for (unsigned k = 0; k < f->marker_len && f->indent >= 14; k++) {
+            x += glyph_draw(f->s, font, f->marker[k], x, top + ascent - font->ascent,
+                            readable(f->marker_colour, f->paper), f->paper);
         }
         f->marker_len = 0U;
     }
@@ -399,14 +474,18 @@ static void flow_flush(flow_t *f, int force)
         const item_t *it = &l->item[i];
         const onewww_font_t *font = &onewww_fonts[it->font];
         const int x_start = f->x0 + f->indent + shift + it->x;
+        const uint16_t colour = readable(it->colour, f->paper);
         int x = x_start;
 
         for (unsigned k = 0; k < it->count; k++) {
             x += glyph_draw(f->s, font, l->cp[it->start + k], x,
-                            top + ascent - font->ascent, it->link >= 0);
+                            top + ascent - font->ascent, colour, f->paper);
+        }
+        if (it->underline) {
+            hline(f->s, x_start, x_start + it->w, top + ascent + 2, LV_INK,
+                  colour, f->paper);
         }
         if (it->link >= 0) {
-            hline(f->s, x_start, x_start + it->w, top + ascent + 2, LV_INK, 1);
             rect_add(x_start, x_start + it->w, f->y, height, (uint32_t)it->link);
         }
     }
@@ -414,12 +493,11 @@ static void flow_flush(flow_t *f, int force)
     line_reset(l);
 }
 
-static void flow_word_end(flow_t *f, const style_t *st)
+static void flow_word_end(flow_t *f, const text_t *tx)
 {
     line_t *l = f->line;
-    const uint8_t font_id = style_font(st);
-    const onewww_font_t *font = &onewww_fonts[font_id];
-    const int avail = f->w - f->indent;
+    const onewww_font_t *font = &onewww_fonts[tx->font];
+    const int avail = f->w - f->indent - f->right;
     int space_w, w;
     item_t *it;
 
@@ -440,11 +518,13 @@ static void flow_word_end(flow_t *f, const style_t *st)
     it->count = (uint16_t)l->word_len;
     memcpy(&l->cp[l->codes], l->word, l->word_len * sizeof(uint16_t));
     l->codes += l->word_len;
-    it->font = font_id;
-    it->link = st->link;
-    /* A link underline also covers the space between its words. */
-    if (it->link >= 0 && space_w != 0 && l->items > 1U &&
-        l->item[l->items - 2U].link == it->link) {
+    it->font = tx->font;
+    it->colour = tx->colour;
+    it->underline = tx->underline;
+    it->link = tx->link;
+    /* An underline also covers the space between the words of one run. */
+    if (it->underline && space_w != 0 && l->items > 1U &&
+        l->item[l->items - 2U].underline && l->item[l->items - 2U].link == it->link) {
         l->item[l->items - 2U].w = (int16_t)(l->item[l->items - 2U].w + space_w);
     }
     it->x = (int16_t)(l->width + space_w);
@@ -454,17 +534,22 @@ static void flow_word_end(flow_t *f, const style_t *st)
     l->space = 0U;
 }
 
-static void flow_char(flow_t *f, const style_t *st, uint16_t code)
+static void flow_char(flow_t *f, const text_t *tx, uint16_t code)
 {
     line_t *l = f->line;
+    const int space = code == ' ' || code == '\n' || code == '\t' ||
+                      code == '\r' || code == '\f';
 
-    if (st->pre) {
-        if (code == '\n') { flow_word_end(f, st); flow_flush(f, 1); return; }
+    if (tx->pre) {
+        if (code == '\n') { flow_word_end(f, tx); flow_flush(f, 1); return; }
         if (code == '\r') return;
         if (code == '\t') code = ' ';
-    } else if (code == ' ' || code == '\n' || code == '\t' || code == '\r' ||
-               code == '\f') {
-        flow_word_end(f, st);
+    } else if (space && tx->nowrap) {
+        /* The words stay on one line: the space is part of the word. */
+        if (l->word_len == 0U || l->word[l->word_len - 1U] == ' ') return;
+        code = ' ';
+    } else if (space) {
+        flow_word_end(f, tx);
         l->space = 1U;
         return;
     }
@@ -473,12 +558,12 @@ static void flow_char(flow_t *f, const style_t *st, uint16_t code)
         code == 0x2060) return;
     if (code == 0xA0 || code == 0x2009 || code == 0x202F || code == 0x2002 ||
         code == 0x2003) code = ' ';
-    if (l->word_len == sizeof(l->word) / sizeof(l->word[0])) flow_word_end(f, st);
+    if (l->word_len == sizeof(l->word) / sizeof(l->word[0])) flow_word_end(f, tx);
     l->word[l->word_len++] = code;
-    if (st->pre && code == ' ') flow_word_end(f, st);
+    if (tx->pre && code == ' ') flow_word_end(f, tx);
 }
 
-static void flow_text(flow_t *f, const style_t *st, const char *text,
+static void flow_text(flow_t *f, const text_t *tx, const char *text,
                       size_t length)
 {
     const unsigned char *p = (const unsigned char *)text, *end = p + length;
@@ -491,18 +576,20 @@ static void flow_text(flow_t *f, const style_t *st, const char *text,
         while (more-- > 0 && p < end && (*p & 0xC0) == 0x80) {
             code = (code << 6) | (*p++ & 0x3FU);
         }
-        flow_char(f, st, code > 0xFFFFU ? '?' : (uint16_t)code);
+        flow_char(f, tx, code > 0xFFFFU ? '?' : (uint16_t)code);
     }
 }
 
-static void flow_break(flow_t *f, const style_t *st, int gap)
+/* Ends the line. Margins between blocks do not add: the largest one
+ * counts, as in a style sheet. */
+static void flow_break(flow_t *f, const text_t *tx, int gap)
 {
-    flow_word_end(f, st);
+    flow_word_end(f, tx);
     flow_flush(f, 0);
-    if (gap != 0 && !f->gap) {
-        f->y += gap;
+    if (gap > f->gap) {
+        f->y += gap - f->gap;
         if (f->s != NULL) (void)surface_need(f->s, (uint32_t)f->y);
-        f->gap = 1U;
+        f->gap = gap;
     }
 }
 
@@ -549,7 +636,7 @@ static void flow_picture(flow_t *f, int h)
         uint8_t *row = s->px + (size_t)(y0 + y) * ROW_BYTES;
 
         memset(next, 0, sizeof(err[0]));
-        s->scb[y0 + y] = 0x00;
+        s->scb[y0 + y] = SCB_USED;      /* 320 mode */
         s->pal[y0 + y] = PAL_PICTURE;
         for (int x = 0; x < 320; x++) {
             int c[3], best = 0, best_d = 1 << 30;
@@ -589,7 +676,7 @@ static void flow_picture(flow_t *f, int h)
 #define MAX_TABLE_DEPTH 8
 #define CELL_PAD       5
 
-static void walk_children(flow_t *f, const onewww_node_t *parent, style_t st);
+static void walk_children(flow_t *f, const onewww_node_t *parent, text_t tx);
 static void walk_table(flow_t *f, const onewww_node_t *table);
 
 static int attr_number(const onewww_node_t *n, const char *name, int fallback)
@@ -597,54 +684,41 @@ static int attr_number(const onewww_node_t *n, const char *name, int fallback)
     char text[16];
     int value = 0, i = 0;
 
-    if (onewww_attr(n, name, text, sizeof(text)) <= 0) return fallback;
+    if (n->length == 0U || onewww_attr(n, name, text, sizeof(text)) <= 0) return fallback;
     while (text[i] >= '0' && text[i] <= '9' && value < 10000) {
         value = value * 10 + (text[i++] - '0');
     }
     return i != 0 ? value : fallback;
 }
 
-static int text_has(const char *hay, size_t n, const char *needle)
-{
-    const size_t m = strlen(needle);
-
-    for (size_t i = 0; i + m <= n; i++) {
-        if (memcmp(hay + i, needle, m) == 0) return 1;
-    }
-    return 0;
-}
-
 static int is_hidden(const onewww_node_t *n)
 {
-    char text[256];
-    int length;
-
-    if (n->length == 0U) return 0;
-    if (text_has(n->text, n->length, "hidden") &&
-        (onewww_attr(n, "hidden", text, sizeof(text)) >= 0 ||
-         (onewww_attr(n, "aria-hidden", text, sizeof(text)) > 0 &&
-          strcmp(text, "true") == 0 && n->tag != OW_SPAN && n->tag != OW_I))) {
-        return 1;
-    }
-    if (!text_has(n->text, n->length, "display")) return 0;
-    length = onewww_attr(n, "style", text, sizeof(text));
-    if (length <= 0) return 0;
-    for (int i = 0, k = 0; i <= length; i++) {       /* remove the spaces */
-        if (text[i] != ' ') text[k++] = text[i];
-    }
-    return strstr(text, "display:none") != NULL;
+    return n->style == NULL || n->style->display == OW_D_NONE;
 }
 
-static void flow_literal(flow_t *f, const style_t *st, const char *text)
+/* The text properties of an element, from its style. */
+static void text_style(text_t *tx, const onewww_style_t *cs)
 {
-    flow_text(f, st, text, strlen(text));
+    if (cs->font_px >= 26U) tx->font = ONEWWW_FONT_H1;
+    else if (cs->font_px >= 19U) tx->font = ONEWWW_FONT_H2;
+    else if (cs->mono) tx->font = ONEWWW_FONT_MONO;
+    else if (cs->font_px <= 12U) tx->font = ONEWWW_FONT_SMALL;
+    else tx->font = (uint8_t)(ONEWWW_FONT_BODY + (cs->bold ? 1 : 0) + (cs->italic ? 2 : 0));
+    tx->colour = cs->color; tx->underline = cs->underline;
+    tx->pre = cs->pre; tx->nowrap = cs->nowrap;
 }
 
-static void set_marker(flow_t *f, const style_t *st)
+static void flow_literal(flow_t *f, const text_t *tx, const char *text)
 {
-    if (st->list == 2U && st->counter != NULL) {
+    flow_text(f, tx, text, strlen(text));
+}
+
+static void set_marker(flow_t *f, const text_t *tx)
+{
+    f->marker_colour = tx->colour;
+    if (tx->list == 2U && tx->counter != NULL) {
         char text[MARKER_MAX];
-        const int n = snprintf(text, sizeof(text), "%d.", (*st->counter)++);
+        const int n = snprintf(text, sizeof(text), "%d.", (*tx->counter)++);
         f->marker_len = 0U;
         for (int i = 0; i < n && i < (int)MARKER_MAX; i++) {
             f->marker[f->marker_len++] = (uint8_t)text[i];
@@ -654,216 +728,161 @@ static void set_marker(flow_t *f, const style_t *st)
     }
 }
 
-static void walk_block(flow_t *f, const onewww_node_t *n, style_t st,
-                       int gap, int indent)
+/* Gives the rows of a block that have no text the paper of the block. */
+static void paper_rows(flow_t *f, int y0, int y1, uint16_t ink)
 {
-    flow_break(f, &st, gap);
-    f->indent += indent;
-    walk_children(f, n, st);
-    flow_break(f, &st, gap);
-    f->indent -= indent;
+    if (f->s == NULL) return;
+    (void)surface_need(f->s, (uint32_t)y1);
+    for (int y = y0; y < y1; y++) row_claim(f->s, y, f->paper, readable(ink, f->paper));
 }
 
-static void walk_node(flow_t *f, const onewww_node_t *n, style_t st)
+/* A block: margins, padding, alignment and paper around its content. */
+static void walk_block(flow_t *f, const onewww_node_t *n, text_t tx,
+                       const text_t *before)
+{
+    const onewww_style_t *cs = n->style;
+    const int indent = f->indent, right = f->right;
+    const uint8_t align = f->align;
+    const uint16_t paper = f->paper;
+    int y0;
+
+    flow_break(f, before, cs->margin_top);
+    y0 = f->y;
+    f->indent += cs->margin_left + cs->padding_left;
+    f->right += cs->margin_right + cs->padding_right;
+    if (f->w - f->indent - f->right < 60) {     /* keep room for text */
+        f->indent = indent; f->right = right;
+    }
+    f->align = cs->align;
+    if (cs->background != OW_NO_COLOR) f->paper = cs->background;
+    if (cs->padding_top != 0) { f->y += cs->padding_top; f->gap = 0; }
+    if (cs->display == OW_D_LIST_ITEM && !cs->list_none) set_marker(f, &tx);
+    else f->marker_len = 0U;
+    if (n->tag == OW_TABLE) {
+        walk_table(f, n);
+        f->gap = 0;
+    } else {
+        walk_children(f, n, tx);
+    }
+    flow_break(f, &tx, 0);
+    f->marker_len = 0U;
+    if (cs->padding_bottom != 0) { f->y += cs->padding_bottom; f->gap = 0; }
+    if (cs->background != OW_NO_COLOR) paper_rows(f, y0, f->y, tx.colour);
+    f->indent = indent; f->right = right; f->align = align; f->paper = paper;
+    flow_break(f, &tx, cs->margin_bottom);
+}
+
+static void walk_node(flow_t *f, const onewww_node_t *n, text_t tx)
 {
     /* Each use ends before the walk goes deeper: one buffer is sufficient
      * and keeps the stack frames small. */
     static char text[HTTP_URL_MAX];
+    const onewww_style_t *cs = n->style;
+    const text_t before = tx;
+    int counter;
 
-    if (n->tag == OW_TEXT) { flow_text(f, &st, n->text, n->length); return; }
-    if (is_hidden(n)) return;
-    if (f->s != NULL && n->length != 0U &&
-        (text_has(n->text, n->length, "id") || n->tag == OW_A)) {
-        if (onewww_attr(n, "id", text, sizeof(text)) > 0) anchor_add(text, f->y);
-        if (n->tag == OW_A && onewww_attr(n, "name", text, sizeof(text)) > 0) {
-            anchor_add(text, f->y);
-        }
+    if (s_abort) return;
+    if (n->tag == OW_TEXT) { flow_text(f, &tx, n->text, n->length); return; }
+    if (cs == NULL || cs->display == OW_D_NONE) return;
+    if (f->s != NULL) {
+        if (n->id[0] != '\0') anchor_add(n->id, f->y);
+        if (n->tag == OW_A && n->length != 0U &&
+            onewww_attr(n, "name", text, sizeof(text)) > 0) anchor_add(text, f->y);
     }
+    flow_word_end(f, &before);
+    text_style(&tx, cs);
+
     switch (n->tag) {
-    case OW_SCRIPT: case OW_STYLE: case OW_HEAD: case OW_TITLE: case OW_META:
-    case OW_LINK: case OW_BASE: case OW_TEMPLATE: case OW_SVG: case OW_IFRAME:
-    case OW_SELECT: case OW_OPTION: case OW_TEXTAREA: case OW_OBJECT:
-    case OW_VIDEO: case OW_AUDIO: case OW_CANVAS: case OW_MAP: case OW_COL:
-    case OW_COLGROUP: case OW_AREA: case OW_EMBED: case OW_SOURCE: case OW_TRACK:
-        return;
     case OW_BR:
-        flow_word_end(f, &st); flow_flush(f, 1);
+        flow_flush(f, 1);
         return;
     case OW_WBR:
-        flow_word_end(f, &st);
         return;
     case OW_HR:
-        flow_break(f, &st, 6);
+        flow_break(f, &tx, 6);
         if (f->s != NULL && surface_need(f->s, (uint32_t)f->y + 1U) == 0) {
-            hline(f->s, f->x0 + f->indent, f->x0 + f->w, f->y, LV_LIGHT, 0);
+            hline(f->s, f->x0 + f->indent, f->x0 + f->w - f->right, f->y,
+                  LV_LIGHT, INK_OF_ROW, f->paper);
         }
-        f->y += 1; f->gap = 0U;
-        flow_break(f, &st, 6);
+        f->y += 1; f->gap = 0;
+        flow_break(f, &tx, 6);
         return;
     case OW_IMG:
         if (s_doc.internal && f->top_level && f->s != NULL &&
             onewww_attr(n, "src", text, sizeof(text)) > 0 &&
             strcmp(text, "builtin") == 0) {
-            flow_break(f, &st, 8);
+            flow_break(f, &tx, 8);
             flow_picture(f, 120);
-            f->gap = 0U;
-            flow_break(f, &st, 8);
+            f->gap = 0;
+            flow_break(f, &tx, 8);
             return;
         }
-        st.small = 1U; st.font_block = 0U; st.mono = 0U;
+        tx.font = ONEWWW_FONT_SMALL;
         if (onewww_attr(n, "alt", text, 96U) > 0) {
-            flow_literal(f, &st, "["); flow_literal(f, &st, text);
-            flow_literal(f, &st, "]");
-        } else if (st.link >= 0) {
-            flow_literal(f, &st, "[image]");
+            flow_literal(f, &tx, "["); flow_literal(f, &tx, text);
+            flow_literal(f, &tx, "]");
+        } else if (tx.link >= 0) {
+            flow_literal(f, &tx, "[image]");
         }
-        flow_word_end(f, &st);
+        flow_word_end(f, &tx);
         return;
     case OW_INPUT: {
         char type[16] = "text";
         (void)onewww_attr(n, "type", type, sizeof(type));
         if (strcmp(type, "hidden") == 0) return;
         if (onewww_attr(n, "value", text, 64U) < 0) text[0] = '\0';
-        flow_word_end(f, &st);
         if (strcmp(type, "submit") == 0 || strcmp(type, "button") == 0 ||
             strcmp(type, "reset") == 0) {
-            st.bold = 1U;
-            flow_literal(f, &st, "[");
-            flow_literal(f, &st, text[0] != '\0' ? text : "Send");
-            flow_literal(f, &st, "]");
+            tx.font = ONEWWW_FONT_BODY_B;
+            flow_literal(f, &tx, "[");
+            flow_literal(f, &tx, text[0] != '\0' ? text : "Send");
+            flow_literal(f, &tx, "]");
         } else if (strcmp(type, "checkbox") == 0 || strcmp(type, "radio") == 0) {
             /* Not shown before forms work: pages hide many of them. */
         } else {
-            flow_literal(f, &st, "[");
-            flow_literal(f, &st, text[0] != '\0' ? text :
+            flow_literal(f, &tx, "[");
+            flow_literal(f, &tx, text[0] != '\0' ? text :
                          "\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0\xC2\xA0");
-            flow_literal(f, &st, "]");
+            flow_literal(f, &tx, "]");
         }
-        flow_word_end(f, &st);
+        flow_word_end(f, &tx);
         return;
     }
     case OW_BUTTON:
-        st.bold = 1U;
-        flow_literal(f, &st, "[");
-        walk_children(f, n, st);
-        flow_literal(f, &st, "]");
-        flow_word_end(f, &st);
-        return;
-    case OW_B: case OW_STRONG:
-        flow_word_end(f, &st); st.bold = 1U;
-        walk_children(f, n, st); flow_word_end(f, &st);
-        return;
-    case OW_I: case OW_EM: case OW_CITE: case OW_VAR: case OW_DFN:
-        flow_word_end(f, &st); st.italic = 1U;
-        walk_children(f, n, st); flow_word_end(f, &st);
-        return;
-    case OW_CODE: case OW_TT: case OW_KBD: case OW_SAMP:
-        flow_word_end(f, &st); st.mono = 1U;
-        walk_children(f, n, st); flow_word_end(f, &st);
-        return;
-    case OW_SMALL: case OW_SUB: case OW_SUP:
-        flow_word_end(f, &st); st.small = 1U;
-        walk_children(f, n, st); flow_word_end(f, &st);
+        tx.font = ONEWWW_FONT_BODY_B;
+        flow_literal(f, &tx, "[");
+        walk_children(f, n, tx);
+        flow_literal(f, &tx, "]");
+        flow_word_end(f, &tx);
         return;
     case OW_A:
-        flow_word_end(f, &st);
-        if (onewww_attr(n, "href", text, sizeof(text)) > 0) {
+        if (n->length != 0U && onewww_attr(n, "href", text, sizeof(text)) > 0) {
             /* A measure pass needs only to know that this is a link. */
-            st.link = f->s != NULL ? link_add(text) : 0;
+            tx.link = f->s != NULL ? link_add(text) : 0;
         }
-        walk_children(f, n, st); flow_word_end(f, &st);
-        return;
-    case OW_P: case OW_BLOCKQUOTE: case OW_FIGURE: case OW_DL:
-        walk_block(f, n, st, 8, n->tag == OW_BLOCKQUOTE || n->tag == OW_FIGURE ? 24 : 0);
-        return;
-    case OW_DD:
-        walk_block(f, n, st, 0, 24);
-        return;
-    case OW_PRE:
-        st.pre = 1U; st.mono = 1U;
-        walk_block(f, n, st, 8, 0);
-        return;
-    case OW_CENTER: {
-        const uint8_t before = f->centre;
-        flow_break(f, &st, 0);
-        f->centre = 1U;
-        walk_children(f, n, st);
-        flow_break(f, &st, 0);
-        f->centre = before;
-        return;
-    }
-    case OW_H1:
-        if (s_doc.internal && f->top_level && f->s != NULL) {
-            flow_break(f, &st, 10);
-            (void)surface_need(f->s, (uint32_t)f->y + 6U);
-            set_palette(f->s, f->y, f->y + 6, PAL_BANNER);
-            f->y += 6; f->row_pal = PAL_BANNER; f->centre = 1U;
-            st.font_block = ONEWWW_FONT_H1;
-            walk_children(f, n, st);
-            flow_break(f, &st, 0);
-            (void)surface_need(f->s, (uint32_t)f->y + 6U);
-            set_palette(f->s, f->y, f->y + 6, PAL_BANNER);
-            f->y += 6; f->row_pal = PAL_TEXT; f->centre = 0U; f->gap = 0U;
-            flow_break(f, &st, 10);
-            return;
-        }
-        st.font_block = ONEWWW_FONT_H1;
-        walk_block(f, n, st, 12, 0);
-        return;
-    case OW_H2:
-        st.font_block = ONEWWW_FONT_H2;
-        walk_block(f, n, st, 10, 0);
-        return;
-    case OW_H3: case OW_H4: case OW_H5: case OW_H6: case OW_DT:
-    case OW_CAPTION: case OW_LEGEND: case OW_SUMMARY:
-        st.bold = 1U;
-        walk_block(f, n, st, n->tag == OW_DT ? 0 : 8, 0);
-        return;
-    case OW_UL: case OW_OL: {
-        int counter = attr_number(n, "start", 1);
-        st.list = n->tag == OW_OL ? 2U : 1U;
-        st.counter = &counter;
-        walk_block(f, n, st, st.list != 0U && f->indent != 0 ? 0 : 6, 24);
-        return;
-    }
-    case OW_LI:
-        flow_break(f, &st, 0);
-        if (f->indent == 0) {           /* an <li> without a list */
-            f->indent = 24;
-            set_marker(f, &st);
-            walk_children(f, n, st);
-            flow_break(f, &st, 0);
-            f->indent = 0; f->marker_len = 0U;
-            return;
-        }
-        set_marker(f, &st);
-        st.list = 0U; st.counter = NULL;
-        walk_children(f, n, st);
-        flow_break(f, &st, 0);
-        f->marker_len = 0U;
-        return;
-    case OW_TABLE:
-        flow_break(f, &st, 6);
-        walk_table(f, n);
-        f->gap = 0U;
-        flow_break(f, &st, 6);
-        return;
-    case OW_TR: case OW_TD: case OW_TH: case OW_DIV: case OW_SECTION:
-    case OW_ARTICLE: case OW_ASIDE: case OW_NAV: case OW_HEADER: case OW_FOOTER:
-    case OW_MAIN: case OW_FORM: case OW_FIELDSET: case OW_DETAILS:
-    case OW_HGROUP: case OW_ADDRESS: case OW_FIGCAPTION: case OW_NOSCRIPT:
-        walk_block(f, n, st, 0, 0);
-        return;
+        break;
+    case OW_UL: case OW_OL:
+        counter = attr_number(n, "start", 1);
+        tx.list = n->tag == OW_OL ? 2U : 1U;
+        tx.counter = &counter;
+        break;
     default:
-        walk_children(f, n, st);
-        return;
+        break;
+    }
+    if (cs->display != OW_D_INLINE || n->tag == OW_TABLE) {
+        walk_block(f, n, tx, &before);
+    } else {
+        f->line->width += cs->margin_left + cs->padding_left;
+        walk_children(f, n, tx);
+        flow_word_end(f, &tx);
+        f->line->width += cs->margin_right + cs->padding_right;
     }
 }
 
-static void walk_children(flow_t *f, const onewww_node_t *parent, style_t st)
+static void walk_children(flow_t *f, const onewww_node_t *parent, text_t tx)
 {
     for (const onewww_node_t *c = parent->first; c != NULL; c = c->next) {
-        walk_node(f, c, st);
+        walk_node(f, c, tx);
     }
 }
 
@@ -913,10 +932,11 @@ static const onewww_node_t *row_next(const onewww_node_t *table,
 
     for (;;) {
         for (; n != NULL; n = n->next) {
-            if (n->tag == OW_TR) return n;
-            if (group == NULL && is_row_group(n->tag) && n->first != NULL) {
+            if (n->tag == OW_TR && !is_hidden(n)) return n;
+            if (group == NULL && is_row_group(n->tag) && n->first != NULL &&
+                !is_hidden(n)) {
                 group = n; n = n->first;
-                if (n->tag == OW_TR) return n;
+                if (n->tag == OW_TR && !is_hidden(n)) return n;
             }
         }
         if (group == NULL) return NULL;
@@ -928,18 +948,27 @@ static const onewww_node_t *row_next(const onewww_node_t *table,
 static int cell_run(flow_t *parent, const onewww_node_t *cell, surface_t *s,
                     int x0, int w, int y, int *max_w, int *max_word)
 {
+    const onewww_style_t *cs = cell->style;
     flow_t f;
-    style_t st = s_plain;
+    text_t tx = s_plain;
     line_t *line = malloc(sizeof(*line));
+    uint16_t paper = parent->paper;
 
     if (line == NULL) return y;
+    /* The paper of the cell, of its row, or of the column around it. */
+    if (cs->background != OW_NO_COLOR) paper = cs->background;
+    else if (cell->parent->style != NULL &&
+             cell->parent->style->background != OW_NO_COLOR) {
+        paper = cell->parent->style->background;
+    }
     memset(&f, 0, sizeof(f));
     memset(line, 0, sizeof(*line));
     f.s = s; f.line = line; f.x0 = x0; f.w = w; f.y = y;
-    f.depth = parent->depth + 1; f.gap = 1U; f.row_pal = PAL_TEXT;
-    if (cell->tag == OW_TH) st.bold = 1U;
-    walk_children(&f, cell, st);
-    flow_break(&f, &st, 0);
+    f.depth = parent->depth + 1; f.gap = NO_GAP; f.paper = paper;
+    f.align = cs->align;
+    text_style(&tx, cs);
+    walk_children(&f, cell, tx);
+    flow_break(&f, &tx, 0);
     if (max_w != NULL) *max_w = f.max_w;
     if (max_word != NULL) *max_word = f.max_word;
     free(line);
@@ -948,22 +977,23 @@ static int cell_run(flow_t *parent, const onewww_node_t *cell, surface_t *s,
 
 static void walk_table(flow_t *f, const onewww_node_t *table)
 {
-    const int x0 = f->x0 + f->indent, avail = f->w - f->indent;
+    const int avail = f->w - f->indent - f->right;
+    int x0 = f->x0 + f->indent;
     int pref[MAX_COLS] = { 0 }, least[MAX_COLS] = { 0 }, width[MAX_COLS];
-    int columns = 0, total = 0, total_least = 0, y = f->y, border;
+    int columns = 0, total = 0, total_least = 0, y, border;
     const onewww_node_t *row, *c;
     grid_t grid;
-    style_t st = s_plain;
 
     /* A caption is a block before the grid. */
     for (c = table->first; c != NULL; c = c->next) {
-        if (c->tag == OW_CAPTION) walk_node(f, c, st);
+        if (c->tag == OW_CAPTION) walk_node(f, c, s_plain);
     }
     y = f->y;
     /* Pass 1: the widest line and the widest word of each column. */
     memset(&grid, 0, sizeof(grid));
     for (row = row_next(table, NULL); row != NULL; row = row_next(table, row)) {
         int used;
+        if (s_abort) break;
         for (c = row->first; c != NULL; c = c->next) {
             int span, start, w = 0, word = 0;
             if (c->tag != OW_TD && c->tag != OW_TH) continue;
@@ -994,9 +1024,9 @@ static void walk_table(flow_t *f, const onewww_node_t *table)
         if (used > columns) columns = used;
     }
     if (columns == 0 || f->depth >= MAX_TABLE_DEPTH) {
-        /* No grid: show the cells as blocks. */
+        /* No grid: show the content as blocks. */
         for (c = table->first; c != NULL; c = c->next) {
-            if (c->tag != OW_CAPTION) walk_node(f, c, st);
+            if (c->tag != OW_CAPTION) walk_node(f, c, s_plain);
         }
         return;
     }
@@ -1007,7 +1037,7 @@ static void walk_table(flow_t *f, const onewww_node_t *table)
         total += pref[i]; total_least += least[i];
     }
     if (f->s == NULL) {         /* measure only: report and stop */
-        if (f->indent + total > f->max_w) f->max_w = f->indent + total;
+        if (f->indent + f->right + total > f->max_w) f->max_w = f->indent + f->right + total;
         if (total_least > f->max_word) f->max_word = total_least;
         return;
     }
@@ -1027,14 +1057,20 @@ static void walk_table(flow_t *f, const onewww_node_t *table)
     total = 0;
     for (int i = 0; i < columns; i++) total += width[i];
     border = attr_number(table, "border", 0) != 0;
+    if (total < avail && table->parent != NULL && table->parent->style != NULL &&
+        table->parent->style->align == OW_ALIGN_CENTER) {
+        x0 += (avail - total) / 2;
+    }
 
     /* Pass 2: draw. */
     memset(&grid, 0, sizeof(grid));
     for (row = row_next(table, NULL); row != NULL; row = row_next(table, row)) {
         int bottom = y + 2 * CELL_PAD;
         int edge[MAX_COLS + 1], edges = 0;
+        uint16_t row_paper = row->style != NULL ? row->style->background : OW_NO_COLOR;
+        uint16_t row_ink = 0x0000;
 
-        if (surface_need(f->s, (uint32_t)bottom) != 0) break;
+        if (s_abort || surface_need(f->s, (uint32_t)bottom) != 0) break;
         for (c = row->first; c != NULL; c = c->next) {
             int span, start, cx = x0, cw = 0, cy;
             if (c->tag != OW_TD && c->tag != OW_TH) continue;
@@ -1048,18 +1084,27 @@ static void walk_table(flow_t *f, const onewww_node_t *table)
                           y + CELL_PAD / 2 + 1, NULL, NULL);
             if (cy + CELL_PAD / 2 + 1 > bottom) bottom = cy + CELL_PAD / 2 + 1;
             if (edges <= MAX_COLS) edge[edges++] = cx;
+            if (row_paper == OW_NO_COLOR && c->style->background != OW_NO_COLOR) {
+                row_paper = c->style->background; row_ink = c->style->color;
+            }
         }
         (void)grid_row_end(&grid);
         if (surface_need(f->s, (uint32_t)bottom + 1U) != 0) break;
+        if (row_paper != OW_NO_COLOR) {
+            const uint16_t paper = f->paper;        /* rows without text */
+            f->paper = row_paper;
+            paper_rows(f, y, bottom, row_ink);
+            f->paper = paper;
+        }
         if (border) {
-            hline(f->s, x0, x0 + total + 1, y, LV_LIGHT, 0);
-            for (int i = 0; i < edges; i++) vline(f->s, edge[i], y, bottom, LV_LIGHT);
-            vline(f->s, x0 + total, y, bottom, LV_LIGHT);
+            hline(f->s, x0, x0 + total + 1, y, LV_LIGHT, INK_OF_ROW, f->paper);
+            for (int i = 0; i < edges; i++) vline(f->s, edge[i], y, bottom, LV_LIGHT, f->paper);
+            vline(f->s, x0 + total, y, bottom, LV_LIGHT, f->paper);
         }
         y = bottom;
     }
     if (border && surface_need(f->s, (uint32_t)y + 1U) == 0) {
-        hline(f->s, x0, x0 + total + 1, y, LV_LIGHT, 0);
+        hline(f->s, x0, x0 + total + 1, y, LV_LIGHT, INK_OF_ROW, f->paper);
         y++;
     }
     f->y = y;
@@ -1067,51 +1112,179 @@ static void walk_table(flow_t *f, const onewww_node_t *table)
 
 /* ---- Public ------------------------------------------------------------ */
 
+#define MAX_SHEETS 16U
+
+static struct {
+    onewww_dom_t *dom;
+    struct {
+        const onewww_node_t *node;      /* <style>: its text is the sheet */
+        char *url;                      /* <link>: the address ... */
+        char *text;                     /* ... and the text, when it came */
+        size_t length;
+    } sheet[MAX_SHEETS];
+    unsigned sheets;
+} s_work;
+
+static void work_free(void)
+{
+    for (unsigned i = 0; i < s_work.sheets; i++) {
+        free(s_work.sheet[i].url); free(s_work.sheet[i].text);
+    }
+    if (s_work.dom != NULL) onewww_dom_free(s_work.dom);
+    memset(&s_work, 0, sizeof(s_work));
+}
+
 void onewww_page_free(void)
 {
     free(s_page.px); free(s_page.scb); free(s_page.pal);
     memset(&s_page, 0, sizeof(s_page));
     doc_free();
+    work_free();
+    s_pals = 1U;
+    s_pal[0].paper = 0x0FFF; s_pal[0].ink = 0x0000; s_pal[0].accent = OW_NO_COLOR;
+}
+
+/* Finds the style sheets of the page, in document order. */
+static void find_sheets(const onewww_node_t *n)
+{
+    static char text[HTTP_URL_MAX], url[HTTP_URL_MAX];
+
+    for (; n != NULL; n = n->next) {
+        if (s_work.sheets == MAX_SHEETS) return;
+        if (n->tag == OW_STYLE && n->first != NULL) {
+            if (onewww_attr(n, "media", text, sizeof(text)) > 0 &&
+                strstr(text, "print") != NULL && strstr(text, "screen") == NULL) continue;
+            s_work.sheet[s_work.sheets++].node = n->first;
+        } else if (n->tag == OW_LINK && s_doc.base != NULL) {
+            if (onewww_attr(n, "rel", text, sizeof(text)) <= 0 ||
+                (strstr(text, "stylesheet") == NULL && strstr(text, "STYLESHEET") == NULL) ||
+                strstr(text, "alternate") != NULL) continue;
+            if (onewww_attr(n, "media", text, sizeof(text)) > 0 &&
+                strstr(text, "print") != NULL && strstr(text, "screen") == NULL &&
+                strstr(text, "all") == NULL) continue;
+            if (onewww_attr(n, "href", text, sizeof(text)) <= 0 ||
+                http_url_resolve(s_doc.base, text, url, sizeof(url)) != 0) continue;
+            s_work.sheet[s_work.sheets].url = copy_text(url);
+            if (s_work.sheet[s_work.sheets].url != NULL) s_work.sheets++;
+        } else if (n->tag != OW_TEXT && n->first != NULL) {
+            find_sheets(n->first);
+        }
+    }
+}
+
+int onewww_page_parse(const uint8_t *html, size_t length,
+                      const char *content_type, const char *base_url,
+                      int internal)
+{
+    size_t n = 0;
+
+    onewww_page_free();
+    s_abort = 0U;
+    s_work.dom = onewww_dom_parse(html, length, content_type);
+    if (s_work.dom == NULL) return -1;
+    s_doc.base = base_url; s_doc.internal = internal != 0;
+    /* The title, with its white space collapsed. */
+    for (const char *t = onewww_dom_title(s_work.dom);
+         *t != '\0' && n + 1U < sizeof(s_doc.title); t++) {
+        const int space = (unsigned char)*t <= ' ';
+        if (space && (n == 0U || s_doc.title[n - 1U] == ' ')) continue;
+        s_doc.title[n++] = space ? ' ' : *t;
+    }
+    s_doc.title[n] = '\0';
+    find_sheets(onewww_dom_root(s_work.dom));
+    return 0;
+}
+
+unsigned onewww_page_sheets(void) { return s_work.sheets; }
+
+const char *onewww_page_sheet_url(unsigned sheet)
+{
+    return sheet < s_work.sheets && s_work.sheet[sheet].text == NULL ?
+           s_work.sheet[sheet].url : NULL;
+}
+
+void onewww_page_sheet_text(unsigned sheet, const char *text, size_t length)
+{
+    if (sheet >= s_work.sheets || s_work.sheet[sheet].url == NULL ||
+        s_work.sheet[sheet].text != NULL || length == 0U) return;
+    s_work.sheet[sheet].text = malloc(length);
+    if (s_work.sheet[sheet].text == NULL) return;
+    memcpy(s_work.sheet[sheet].text, text, length);
+    s_work.sheet[sheet].length = length;
+}
+
+int onewww_page_layout(void)
+{
+    onewww_css_t *css;
+    onewww_node_t *root, *body;
+    flow_t f;
+    line_t *line;
+    int result = 0;
+
+    if (s_work.dom == NULL) return -1;
+    css = onewww_css_new();
+    line = malloc(sizeof(*line));
+    if (css == NULL || line == NULL || surface_need(&s_page, ROW_CHUNK) != 0) {
+        onewww_css_free(css); free(line); onewww_page_free();
+        return -1;
+    }
+    s_page.rows = 0U;
+    for (unsigned i = 0; i < s_work.sheets; i++) {
+        if (s_work.sheet[i].node != NULL) {
+            onewww_css_add(css, s_work.sheet[i].node->text, s_work.sheet[i].node->length);
+        } else if (s_work.sheet[i].text != NULL) {
+            onewww_css_add(css, s_work.sheet[i].text, s_work.sheet[i].length);
+        }
+        pause_point();
+    }
+    if (s_abort || onewww_css_resolve(css, s_work.dom) != 0) {
+        onewww_css_free(css); free(line);
+        result = s_abort ? -2 : -1;
+        s_abort = 0U;
+        onewww_page_free();
+        return result;
+    }
+    onewww_css_free(css);
+    root = onewww_dom_root(s_work.dom);
+    body = root->first;
+    /* The page has its own margin; the paper and ink of <body> (or of
+     * <html>) are those of the page. */
+    for (onewww_node_t *e = root; e != NULL; e = e == root ? body : NULL) {
+        onewww_style_t *cs = e->style;
+        cs->margin_top = cs->margin_bottom = cs->margin_left = cs->margin_right = 0;
+        cs->padding_top = cs->padding_bottom = cs->padding_left = cs->padding_right = 0;
+        if (cs->background != OW_NO_COLOR) s_pal[0].paper = cs->background;
+        cs->background = OW_NO_COLOR;
+        cs->display = OW_D_BLOCK;
+    }
+    s_pal[0].ink = readable(body->style->color, s_pal[0].paper);
+
+    memset(&f, 0, sizeof(f));
+    memset(line, 0, sizeof(*line));
+    f.s = &s_page; f.line = line; f.x0 = MARGIN; f.w = PAGE_WIDTH - 2 * MARGIN;
+    f.top_level = 1U; f.gap = NO_GAP; f.paper = s_pal[0].paper;
+    walk_node(&f, root, s_plain);
+    flow_break(&f, &s_plain, 0);
+    (void)surface_need(&s_page, (uint32_t)f.y + 8U);
+    free(line);
+    work_free();
+    s_doc.base = NULL;
+    if (s_abort) {
+        s_abort = 0U;
+        onewww_page_free();
+        return -2;
+    }
+    return 0;
 }
 
 int onewww_page_build(const uint8_t *html, size_t length,
                       const char *content_type, const char *base_url,
                       int internal)
 {
-    onewww_dom_t *dom;
-    flow_t f;
-    line_t *line;
-    size_t n;
-
-    onewww_page_free();
-    dom = onewww_dom_parse(html, length, content_type);
-    line = malloc(sizeof(*line));
-    if (dom == NULL || line == NULL || surface_need(&s_page, ROW_CHUNK) != 0) {
-        onewww_dom_free(dom); free(line); onewww_page_free();
+    if (onewww_page_parse(html, length, content_type, base_url, internal) != 0) {
         return -1;
     }
-    s_page.rows = 0U;
-    s_doc.base = base_url; s_doc.internal = internal != 0;
-    /* The title, with its white space collapsed. */
-    n = 0;
-    for (const char *t = onewww_dom_title(dom); *t != '\0' && n + 1U < sizeof(s_doc.title); t++) {
-        const int space = (unsigned char)*t <= ' ';
-        if (space && (n == 0U || s_doc.title[n - 1U] == ' ')) continue;
-        s_doc.title[n++] = space ? ' ' : *t;
-    }
-    s_doc.title[n] = '\0';
-
-    memset(&f, 0, sizeof(f));
-    memset(line, 0, sizeof(*line));
-    f.s = &s_page; f.line = line; f.x0 = MARGIN; f.w = PAGE_WIDTH - 2 * MARGIN;
-    f.top_level = 1U; f.row_pal = PAL_TEXT; f.gap = 1U;
-    walk_children(&f, onewww_dom_root(dom), s_plain);
-    flow_break(&f, &s_plain, 0);
-    (void)surface_need(&s_page, (uint32_t)f.y + 8U);
-    free(line);
-    onewww_dom_free(dom);
-    s_doc.base = NULL;
-    return 0;
+    return onewww_page_layout();
 }
 
 uint32_t onewww_page_rows(void) { return s_page.rows; }
@@ -1147,6 +1320,8 @@ int onewww_anchor_row(const char *name)
     return -1;
 }
 
+#define STATUS_PAPER 0x0DDD
+
 static int status_text(surface_t *s, const char *text, int x, int limit,
                        int draw)
 {
@@ -1163,10 +1338,10 @@ static int status_text(surface_t *s, const char *text, int x, int limit,
         if (code > 0xFFFFU) code = '?';
         advance = glyph_find(font, (uint16_t)code)->advance;
         if (x + advance > limit) {
-            if (draw) (void)glyph_draw(s, font, 0x2026, x, 2, 0);
+            if (draw) (void)glyph_draw(s, font, 0x2026, x, 2, 0x0000, STATUS_PAPER);
             break;
         }
-        if (draw) (void)glyph_draw(s, font, (uint16_t)code, x, 2, 0);
+        if (draw) (void)glyph_draw(s, font, (uint16_t)code, x, 2, 0x0000, STATUS_PAPER);
         x += advance;
     }
     return x;
@@ -1179,15 +1354,26 @@ static void status_draw(const char *left, const char *right)
     int right_x = PAGE_WIDTH - 6;
 
     memset(s_status_px, 0, sizeof(s_status_px));
-    memset(s_status_scb, 0x80, sizeof(s_status_scb));
-    memset(s_status_pal, PAL_SHADE, sizeof(s_status_pal));
-    hline(&s, 0, PAGE_WIDTH, 0, LV_DARK, 0);
+    memset(s_status_scb, SCB_640, sizeof(s_status_scb));
+    memset(s_status_pal, 0, sizeof(s_status_pal));
+    for (int y = 0; y < (int)ONEWWW_STATUS_ROWS; y++) row_claim(&s, y, STATUS_PAPER, 0x0000);
+    hline(&s, 0, PAGE_WIDTH, 0, LV_DARK, 0x0000, STATUS_PAPER);
     if (right != NULL && right[0] != '\0') {
         right_x -= status_text(&s, right, 0, PAGE_WIDTH, 0);
         (void)status_text(&s, right, right_x, PAGE_WIDTH, 1);
         right_x -= 12;
     }
     (void)status_text(&s, left, 6, right_x - 8, 1);
+}
+
+static uint16_t mix(uint16_t a, uint16_t b, int part, int of)
+{
+    uint16_t out = 0;
+    for (int shift = 0; shift <= 8; shift += 4) {
+        const int ca = (a >> shift) & 15, cb = (b >> shift) & 15;
+        out |= (uint16_t)(((ca * (of - part) + cb * part + of / 2) / of) << shift);
+    }
+    return out;
 }
 
 /* An arrow: 'X' is ink, '.' is paper. */
@@ -1203,19 +1389,19 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
                     uint8_t *fields)
 {
     static const uint8_t magic[4] = { 0xD3, 0xC8, 0xD2, 0xB4 };  /* SHR4 */
-    static uint8_t row_scb[ONEWWW_VIEW_ROWS], row_pal[ONEWWW_VIEW_ROWS];
-    uint8_t slot_of[2][PAL_BASES * 2U];
-    uint8_t next[2] = { 0U, 0U };
+    static uint8_t row_scb[ONEWWW_VIEW_ROWS], row_accent[ONEWWW_VIEW_ROWS];
+    uint16_t slot_pal[2][16];
+    uint8_t slots[2] = { 0U, 0U };
 
     memset(fields, 0, ONEWWW_FIELDS_BYTES);
-    memset(slot_of, 0xFF, sizeof(slot_of));
     status_draw(left, right);
     for (uint32_t r = 0; r < ONEWWW_VIEW_ROWS; r++) {
         const uint32_t field = r & 1U, line = r >> 1;
         uint8_t *base = fields + field * ONEWWW_FIELD_BYTES;
         const uint8_t *px = NULL;
-        uint8_t scb = 0x80, pal = PAL_TEXT, slot;
-        unsigned base_pal, link;
+        uint8_t scb = SCB_640;
+        uint16_t pal = 0U;
+        unsigned slot;
 
         if (r >= ONEWWW_PAGE_VIEW) {
             const uint32_t sr = r - ONEWWW_PAGE_VIEW;
@@ -1225,26 +1411,52 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
             px = s_page.px + (size_t)(top + r) * ROW_BYTES;
             scb = s_page.scb[top + r]; pal = s_page.pal[top + r];
         }
-        row_scb[r] = scb; row_pal[r] = pal;
+        scb &= SCB_640;
+        row_scb[r] = scb;
+        row_accent[r] = pal != PAL_PICTURE && s_pal[pal].accent != OW_NO_COLOR;
         if (px != NULL) memcpy(base + line * ROW_BYTES, px, ROW_BYTES);
-        base_pal = pal & 0x7FU; link = (pal & PAL_LINK) != 0U ? 1U : 0U;
-        slot = slot_of[field][base_pal * 2U + link];
-        if (slot == 0xFF) {
-            uint8_t *entry;
-            slot = next[field] < 16U ? next[field]++ : 0U;
-            slot_of[field][base_pal * 2U + link] = slot;
-            entry = base + 0x7E00U + (uint32_t)slot * 32U;
+        for (slot = 0; slot < slots[field] && slot_pal[field][slot] != pal; slot++) {}
+        if (slot == slots[field] && slots[field] == 16U) {
+            /* All 16 palettes of this field are in use: take the nearest. */
+            int best_d = 1 << 30;
             for (unsigned i = 0; i < 16U; i++) {
-                const uint16_t c = base_pal == PAL_PICTURE ?
-                    s_picture_palette[i] :
-                    s_text_palettes[base_pal][link][i & 3U];
+                const uint16_t other = slot_pal[field][i];
+                int d;
+                if (other == PAL_PICTURE || pal == PAL_PICTURE) continue;
+                d = color_distance(s_pal[other].paper, s_pal[pal].paper) * 4 +
+                    color_distance(s_pal[other].ink, s_pal[pal].ink) +
+                    ((s_pal[other].accent != OW_NO_COLOR) != (s_pal[pal].accent != OW_NO_COLOR) ? 40 : 0);
+                if (d < best_d) { best_d = d; slot = i; }
+            }
+            if (best_d == 1 << 30) slot = 0U;
+            row_accent[r] = slot_pal[field][slot] != PAL_PICTURE &&
+                            s_pal[slot_pal[field][slot]].accent != OW_NO_COLOR;
+        } else if (slot == slots[field]) {
+            uint8_t *entry = base + 0x7E00U + (uint32_t)slot * 32U;
+            uint16_t four[4];
+            slot_pal[field][slots[field]++] = pal;
+            if (pal != PAL_PICTURE) {
+                const rowpal_t *p = &s_pal[pal];
+                four[0] = p->paper;
+                if (p->accent == OW_NO_COLOR) {
+                    four[1] = mix(p->paper, p->ink, 1, 3);
+                    four[2] = mix(p->paper, p->ink, 2, 3);
+                    four[3] = p->ink;
+                } else {
+                    four[1] = mix(p->paper, p->ink, 1, 2);
+                    four[2] = p->ink;
+                    four[3] = p->accent;
+                }
+            }
+            for (unsigned i = 0; i < 16U; i++) {
+                const uint16_t c = pal == PAL_PICTURE ? s_picture_palette[i] : four[i & 3U];
                 entry[2U * i] = (uint8_t)c;
                 entry[2U * i + 1U] = (uint8_t)(c >> 8);
             }
         }
         base[0x7D00U + line] = (uint8_t)(scb | slot);
     }
-    /* The selected link: paper and link colour change places. */
+    /* The selected link: paper and the last colour change places. */
     for (uint32_t i = 0; selected >= 0 && i < s_doc.rects; i++) {
         const rect_t *rc = &s_doc.rect[i];
         if (rc->link != (uint32_t)selected || rc->y + rc->h <= top ||
@@ -1253,7 +1465,7 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
              y < rc->y + rc->h && y < top + ONEWWW_PAGE_VIEW; y++) {
             const uint32_t r = y - top;
             uint8_t *row = fields + (r & 1U) * ONEWWW_FIELD_BYTES + (r >> 1) * ROW_BYTES;
-            if ((row_pal[r] & PAL_LINK) == 0U || row_scb[r] != 0x80U) continue;
+            if (row_scb[r] != SCB_640) continue;
             for (int x = rc->x0 - 1; x <= rc->x1; x++) {
                 unsigned shift, v;
                 if (x < 0 || x >= PAGE_WIDTH) continue;
@@ -1277,9 +1489,9 @@ void onewww_compose(uint32_t top, const char *left, const char *right,
             const int x = pointer_x + px;
             const char c = s_pointer[py][px];
             if (c == ' ' || x < 0 || x >= PAGE_WIDTH) continue;
-            if (row_scb[r] == 0x80U) {
+            if (row_scb[r] == SCB_640) {
                 const unsigned shift = 6U - 2U * ((unsigned)x & 3U);
-                const unsigned ink = (row_pal[r] & PAL_LINK) != 0U ? 2U : 3U;
+                const unsigned ink = row_accent[r] ? 2U : 3U;
                 row[x >> 2] = (uint8_t)((row[x >> 2] & ~(3U << shift)) |
                                         ((c == 'X' ? ink : 0U) << shift));
             } else {

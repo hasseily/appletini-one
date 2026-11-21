@@ -20,6 +20,8 @@ struct onewww_dom {
     uint8_t latin1;
 };
 
+int (*onewww_pause)(void);
+
 static const char *const s_names[OW_TAG_COUNT] = {
     "", "",
     "html", "head", "body", "title", "script", "style", "meta",
@@ -82,6 +84,11 @@ static uint16_t tag_find(const char *p, size_t n)
         if (same_name(p, n, s_names[t])) return t;
     }
     return OW_UNKNOWN;
+}
+
+uint16_t onewww_tag_find(const char *name, size_t length)
+{
+    return tag_find(name, length);
 }
 
 static size_t put_utf8(char *out, uint32_t code)
@@ -197,12 +204,47 @@ static onewww_node_t *node_new(onewww_dom_t *dom, onewww_node_t *parent,
 
     if (n == NULL) return NULL;
     memset(n, 0, sizeof(*n));
-    n->tag = tag; n->parent = parent; n->text = "";
+    n->tag = tag; n->parent = parent; n->text = ""; n->id = ""; n->classes = "";
     if (parent != NULL) {
+        n->prev = parent->last;
         if (parent->last != NULL) parent->last->next = n; else parent->first = n;
         parent->last = n;
     }
     return n;
+}
+
+void *onewww_dom_alloc(onewww_dom_t *dom, size_t bytes) { return arena(dom, bytes); }
+
+static int contains(const char *hay, size_t n, const char *needle)
+{
+    const size_t m = strlen(needle);
+    for (size_t i = 0; i + m <= n; i++) {
+        if (memcmp(hay + i, needle, m) == 0) return 1;
+    }
+    return 0;
+}
+
+/* Sets the attributes of an element and keeps its id and classes apart:
+ * the style rules need them often. */
+static void set_attrs(onewww_dom_t *dom, onewww_node_t *node,
+                      const char *attrs, const char *end)
+{
+    static char value[1024];
+    int n;
+
+    node->text = decode(dom, attrs, end, 0, &node->length);
+    for (int which = 0; which < 2; which++) {
+        const char *name = which ? "class" : "id";
+        char *copy;
+        if (!contains(node->text, node->length, name) &&
+            !contains(node->text, node->length, which ? "CLASS" : "ID")) continue;
+        n = onewww_attr(node, name, value, sizeof(value));
+        if (n <= 0) continue;
+        copy = arena(dom, (size_t)n + 1U);
+        if (copy == NULL) return;
+        memcpy(copy, value, (size_t)n + 1U);
+        if (which) node->classes = copy; else node->id = copy;
+    }
 }
 
 static int is_void(uint16_t t)
@@ -333,16 +375,23 @@ onewww_dom_t *onewww_dom_parse(const uint8_t *html, size_t length,
 {
     onewww_dom_t *dom = calloc(1, sizeof(*dom));
     const char *p = (const char *)html, *end = p + length;
-    onewww_node_t *cur;
+    onewww_node_t *cur, *body;
+    unsigned steps = 0U;
 
     if (dom == NULL) return NULL;
     dom->latin1 = (uint8_t)charset_latin1(html, length, content_type);
     dom->title = "";
-    dom->root = cur = node_new(dom, NULL, OW_BODY);
+    dom->root = node_new(dom, NULL, OW_HTML);
+    cur = dom->root != NULL ? node_new(dom, dom->root, OW_BODY) : NULL;
     if (cur == NULL) { onewww_dom_free(dom); return NULL; }
+    body = cur;
 
     while (p < end && !dom->failed) {
         const char *q;
+        if ((++steps & 255U) == 0U && onewww_pause != NULL && onewww_pause()) {
+            dom->failed = 1U;
+            break;
+        }
         if (*p != '<') {
             onewww_node_t *t;
             q = memchr(p, '<', (size_t)(end - p));
@@ -391,17 +440,35 @@ onewww_dom_t *onewww_dom_parse(const uint8_t *html, size_t length,
                 if (q == NULL) q = end;
             }
             p = q < end ? q + 1 : end;
-            if (tag == OW_HTML || tag == OW_HEAD || tag == OW_BODY) continue;
-            if (tag == OW_SCRIPT || tag == OW_STYLE) {
+            if (tag == OW_HTML || tag == OW_BODY) {
+                /* The first tag gives its attributes to the fixed element. */
+                onewww_node_t *fixed = tag == OW_HTML ? dom->root : body;
+                if (fixed->length == 0U) set_attrs(dom, fixed, attrs, q);
+                continue;
+            }
+            if (tag == OW_HEAD) continue;
+            if (tag == OW_SCRIPT) {
                 q = find_close(p, end, s_names[tag]);
                 q = memchr(q, '>', (size_t)(end - q));
+                p = q != NULL ? q + 1 : end;
+                continue;
+            }
+            if (tag == OW_STYLE) {      /* keep the style text as it is */
+                onewww_node_t *t;
+                const char *close = find_close(p, end, s_names[tag]);
+                node = node_new(dom, cur, tag);
+                if (node == NULL) break;
+                set_attrs(dom, node, attrs, q);
+                t = node_new(dom, node, OW_TEXT);
+                if (t != NULL) t->text = decode(dom, p, close, 0, &t->length);
+                q = memchr(close, '>', (size_t)(end - close));
                 p = q != NULL ? q + 1 : end;
                 continue;
             }
             cur = implied_close(cur, tag);
             node = node_new(dom, depth_of(cur) < MAX_DEPTH ? cur : cur->parent, tag);
             if (node == NULL) break;
-            node->text = decode(dom, attrs, q, 0, &node->length);
+            set_attrs(dom, node, attrs, q);
             if (tag == OW_TITLE || tag == OW_TEXTAREA) {
                 onewww_node_t *t = node_new(dom, node, OW_TEXT);
                 q = find_close(p, end, s_names[tag]);

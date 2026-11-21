@@ -27,21 +27,52 @@ typedef enum {
     OW_LEGEND, OW_HGROUP, OW_DFN, OW_TAG_COUNT
 } onewww_tag_t;
 
+#define OW_NO_COLOR 0xFFFFU
+
+enum { OW_D_INLINE = 0, OW_D_BLOCK, OW_D_NONE, OW_D_LIST_ITEM };
+enum { OW_ALIGN_LEFT = 0, OW_ALIGN_CENTER, OW_ALIGN_RIGHT };
+
+/* The style of an element after the cascade. Lengths are screen pixels. */
+typedef struct onewww_style {
+    uint16_t color;             /* text, 0RGB */
+    uint16_t background;        /* 0RGB, or OW_NO_COLOR */
+    uint8_t display;
+    uint8_t font_px;            /* CSS pixels; 16 is the normal text size */
+    uint8_t bold, italic, mono, underline, pre, nowrap, align, list_none;
+    int16_t margin_top, margin_bottom, margin_left, margin_right;
+    int16_t padding_top, padding_bottom, padding_left, padding_right;
+} onewww_style_t;
+
 typedef struct onewww_node {
-    struct onewww_node *parent, *first, *last, *next;
+    struct onewww_node *parent, *first, *last, *next, *prev;
     const char *text;       /* OW_TEXT: the text. Element: its attributes. */
+    const char *id;         /* element: the id attribute, or "" */
+    const char *classes;    /* element: the class attribute, or "" */
+    onewww_style_t *style;  /* element: set by onewww_css_resolve() */
     uint32_t length;
     uint16_t tag;
 } onewww_node_t;
 
 typedef struct onewww_dom onewww_dom_t;
 
+/* Optional. The parser and the layout call it often. It can give the
+ * processor to other work for a time. A return value that is not zero
+ * stops the page: the parser returns NULL, the layout returns -2. */
+extern int (*onewww_pause)(void);
+
 /* Parses a page. content_type can be NULL. Returns NULL without memory. */
 onewww_dom_t *onewww_dom_parse(const uint8_t *html, size_t length,
                                const char *content_type);
 void onewww_dom_free(onewww_dom_t *dom);
+/* The root is the <html> element. Its one child is <body>, which holds
+ * all the content (also what the page had in <head>). */
 onewww_node_t *onewww_dom_root(onewww_dom_t *dom);
+/* Memory that lives as long as the tree. NULL without memory. */
+void *onewww_dom_alloc(onewww_dom_t *dom, size_t bytes);
 const char *onewww_dom_title(const onewww_dom_t *dom);
+
+/* The tag number of a name in any letter case, or OW_UNKNOWN. */
+uint16_t onewww_tag_find(const char *name, size_t length);
 
 /* Copies the decoded value of an attribute. Returns its length, or -1
  * when the element does not have the attribute. */

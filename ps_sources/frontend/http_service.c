@@ -680,7 +680,8 @@ static int redirect(void)
 int http_service_start_owned(const http_request_t *request, uint8_t owner)
 {
     http_url_t parsed;
-    if (owner > HTTP_OWNER_NET && owner != HTTP_OWNER_UPDATE && owner != HTTP_OWNER_COGS)
+    if (owner > HTTP_OWNER_NET && owner != HTTP_OWNER_UPDATE && owner != HTTP_OWNER_COGS &&
+        owner != HTTP_OWNER_WWW)
         return HTTP_E_ARGUMENT;
     if (g_http.owner != HTTP_OWNER_NONE || g_http.owns_eth || http_service_active() || console.active) return HTTP_E_BUSY;
     if (storage_busy || ftp_sd_service_active() || usb_sdd_service_active()) return HTTP_E_STORAGE_BUSY;
@@ -693,6 +694,7 @@ int http_service_start_owned(const http_request_t *request, uint8_t owner)
     uint64_t generation = g_http.status.seed_generation;
     memset(&g_http.status,0,sizeof(g_http.status));
     g_http.status.seed_generation = generation;
+    http_core_accept_gzip(owner == HTTP_OWNER_WWW);
     g_http.url = parsed; strcpy(g_http.status.url,request->url);
     strcpy(g_http.method,request->method);
     strcpy(g_http.headers,request->headers ? request->headers : "");

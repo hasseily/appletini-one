@@ -43,10 +43,13 @@
  *   0x3F0D0000..0x3F0D0FFF  reserved for linear text overlay control
  *   0x3F0D1000  linear text overlay shadow slot 0 (48 KB)
  *   0x3F0DD000  linear text overlay shadow slot 1 (48 KB)
- *   0x3F0E9000..0x3F0FFFFF  free
+ *   0x3F0E9000  ONEWWW direct SHR staging (64 KB, NONCACHE)
+ *   0x3F0F9000..0x3F0FFFFF  free
  *   0x3F100000  apple_cycle_egress shadow main bank    (64 KB)
  *   0x3F110000  apple_cycle_egress shadow aux bank     (64 KB)
- *   0x3F120000..0x3F1FFFFF  free
+ *   0x3F120000  captured $2000-$9FFF while ONEWWW owns the screen
+ *               (64 KB, CPU1 only)
+ *   0x3F130000..0x3F1FFFFF  free
  *   0x3F200000  apple-cycle egress ring (1 MB; ends at 0x3F300000)
  *   0x3F300000  Apple FB slot 0    (1 MB)              ┐
  *   0x3F400000  Apple FB slot 1    (1 MB)              │ contiguous trio
@@ -147,6 +150,11 @@ extern const uint32_t comp_apple_slot_addr[COMP_APPLE_SLOT_COUNT];
  * coherently with no cache maintenance. Keep this in sync with the address
  * map comment at the top of this file. */
 #define APPLE_VIDEO_ROM_OVERRIDE_ADDR   0x3F020000u
+/* ONEWWW: CPU0 writes two SHR fields here (AUX then MAIN $2000-$9FFF);
+ * CPU1 copies them into its video shadow. See apple_fb_direct_publish. */
+#define APPLE_DIRECT_SHR_STAGING_ADDR   0x3F0E9000u
+#define APPLE_DIRECT_SHR_BACKUP_ADDR    0x3F120000u
+#define APPLE_DIRECT_SHR_FIELD_BYTES    0x8000u
 #define APPLE_VIDEO_ROM_OVERRIDE_BYTES  4096u
 
 /* ---------- Apple subwindow geometry inside the output frame ----------- */

@@ -164,6 +164,18 @@ uint32_t apple_fb_video_rom_mode_get(void);
 void apple_fb_video_rom_ack_set(uint32_t gen);
 uint32_t apple_fb_video_rom_ack_get(void);
 
+/* Direct SHR picture (ONEWWW). CPU0 fills the staging area, then
+ * publishes mode and a new generation. CPU1 copies the fields into its
+ * video shadow (SHOW) or restores the captured bytes (RELEASE), then ACKs.
+ * CPU0 must wait for ACK == generation before it changes the area. */
+#define APPLE_FB_DIRECT_RELEASE 0U
+#define APPLE_FB_DIRECT_SHOW    1U
+void apple_fb_direct_publish(uint32_t gen, uint32_t mode);
+uint32_t apple_fb_direct_gen_get(void);
+uint32_t apple_fb_direct_mode_get(void);
+void apple_fb_direct_ack_set(uint32_t gen);
+uint32_t apple_fb_direct_ack_get(void);
+
 /* Diagnostic shadow-dump request (CPU0 writes, CPU1 takes). CPU0 cannot
  * read the Apple memory shadow banks directly: they are cacheable and
  * written through CPU1's L1, so a CPU0 read may observe stale DDR/L2

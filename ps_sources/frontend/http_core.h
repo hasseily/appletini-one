@@ -35,6 +35,8 @@ int http_url_resolve(const char *base, const char *location, char *out, size_t c
 int http_request_build(const http_url_t *url, const char *method,
                        const char *headers, size_t body_length,
                        int strip_credentials, char *out, size_t cap);
+/* On: requests ask for gzip and a gzip body passes through unchanged. */
+void http_core_accept_gzip(int on);
 void http_parser_init(http_parser_t *parser, int head, uint32_t limit);
 int http_parser_feed(http_parser_t *parser, const uint8_t *data, size_t length,
                      size_t *used, http_body_sink_t sink, void *ctx);

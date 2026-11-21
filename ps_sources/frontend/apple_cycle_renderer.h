@@ -49,6 +49,9 @@ void apple_cycle_renderer_sync_shr_mode(uint8_t pl_shr_active);
  * posting window immediately so a second interlace field loaded while
  * SHR is off still reaches the capture. */
 void apple_cycle_renderer_note_aux_ctrl_write(uint8_t value);
+/* The shadow now holds a complete SHR picture: draw it at the next frame
+ * marker, without the settle wait. */
+void apple_cycle_renderer_note_direct_shr(void);
 
 /* True when a legacy frame record needs two future frame snapshots for its
  * per-switch scanner-phase correction. Fake SHR emits one marker per frame

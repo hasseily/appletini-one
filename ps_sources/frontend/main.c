@@ -78,6 +78,7 @@
 #include "apple_cycle_renderer.h"
 #include "apple_fb_handoff.h"
 #include "video_rom_service.h"
+#include "onewww.h"
 #include "../lib/amp.h"
 
 /*
@@ -5525,6 +5526,7 @@ int main(void)
         video_rom_service_poll();
         smartport_service_poll();
         video_rom_service_poll();
+        onewww_poll();
         usb0_priority_checkpoint();
         disk2_service_poll();
         usb0_priority_checkpoint();

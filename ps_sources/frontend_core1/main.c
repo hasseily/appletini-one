@@ -367,6 +367,7 @@ int main(void)
             (uint8_t)(apple_status & CARD_CTRL_APPLE_RESET_SEQ_MASK);
         if (reset_seq != reset_seq_last) {
             reset_seq_last = reset_seq;
+            apple_cycle_egress_direct_release();
             apple_cycle_renderer_reset_local_video_state();
         }
         apple_cycle_renderer_set_vtw_1mhz(
@@ -376,6 +377,7 @@ int main(void)
         linear_text_overlay_capture_poll();
         pc_transporter_cga_capture_poll();
         apple_cycle_egress_poll();
+        apple_cycle_egress_direct_poll();
 
         /* Diagnostic shadow-dump request from CPU0's UART console.
          * Costs one strongly-ordered OCM read per pass when idle;

@@ -136,6 +136,10 @@ int http_url_resolve(const char *base, const char *location, char *out, size_t c
     return http_url_parse(out, &check);
 }
 
+/* ONEWWW inflates its pages itself. Other clients get identity bodies. */
+static int accept_gzip;
+void http_core_accept_gzip(int on) { accept_gzip = on != 0; }
+
 int http_request_build(const http_url_t *url, const char *method,
                        const char *headers, size_t body_length,
                        int strip_credentials, char *out, size_t cap)
@@ -144,9 +148,10 @@ int http_request_build(const http_url_t *url, const char *method,
     int n, user_agent = 0;
     if (!token(method)) return HTTP_FORMAT;
     n = snprintf(out, cap, "%s %s HTTP/1.1\r\nHost: %s:%u\r\n"
-                 "Connection: close\r\nAccept-Encoding: identity\r\n"
+                 "Connection: close\r\nAccept-Encoding: %s\r\n"
                  "Content-Length: %lu\r\n",
-                 method, url->path, url->host, url->port, (unsigned long)body_length);
+                 method, url->path, url->host, url->port,
+                 accept_gzip ? "gzip" : "identity", (unsigned long)body_length);
     if (n < 0 || (size_t)n >= cap) return HTTP_LIMIT;
     used = (size_t)n;
     while (headers && *headers) {
@@ -361,7 +366,8 @@ static int response_line(http_parser_t *p)
     } else if (equal(p->line, "Transfer-Encoding")) {
         if (p->chunked || !equal(value, "chunked")) return HTTP_UNSUPPORTED;
         p->chunked = 1;
-    } else if (equal(p->line, "Content-Encoding") && !equal(value, "identity")) return HTTP_UNSUPPORTED;
+    } else if (equal(p->line, "Content-Encoding") && !equal(value, "identity") &&
+               !(accept_gzip && equal(value, "gzip"))) return HTTP_UNSUPPORTED;
     else if (equal(p->line, "Content-Type")) {
         if (strlen(value) >= sizeof(p->content_type)) return HTTP_LIMIT;
         if (p->content_type[0] && strcmp(p->content_type, value)) return HTTP_FORMAT;

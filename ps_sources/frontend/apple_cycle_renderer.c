@@ -2197,6 +2197,13 @@ void apple_cycle_renderer_note_aux_ctrl_write(uint8_t value)
     }
 }
 
+void apple_cycle_renderer_note_direct_shr(void)
+{
+    s_shr_cache_invalidate = 1u;
+    s_shr_settle_generation = g_video_shadow_generation;
+    s_shr_settle_armed = 1u;
+}
+
 /* Exact per-byte floor average, used to merge page-flip fields on
  * sub-120 Hz output: alternating pages at 50/60 Hz would strobe, so
  * both fields blend 50/50 into every frame instead. */

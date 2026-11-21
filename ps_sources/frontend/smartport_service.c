@@ -14,6 +14,7 @@
 #include "memory_api.h"
 #include "memory_api_hw.h"
 #include "net_service.h"
+#include "onewww.h"
 #include "glyph_api.h"
 #include "net_transport_test.h"
 #include "video_rom_service.h"
@@ -1220,6 +1221,7 @@ static void sp_glyph_check_reset(void)
         glyph_api_reset();
         net_transport_test_reset(sequence);
         net_service_reset();
+        onewww_reset();
         g_glyph_reset_sequence = sequence;
         g_glyph_reset_sequence_valid = 1U;
     }
@@ -1693,7 +1695,14 @@ static void execute_command(void)
                 sp_response_append(result);
                 break;
             }
-            if (unit == 0U && status_code >= NET_SELECTOR && status_code <= NET_LAST_SELECTOR) {
+            if (unit == 0U && status_code == ONEWWW_SELECTOR) {
+                length = len == 10U ? onewww_status(g_scratch,
+                    sizeof(g_scratch)) : 0U;
+                if (!memory_api_hw_response_valid()) {
+                    g_irq_tick_valid = 0U;
+                    return;
+                }
+            } else if (unit == 0U && status_code >= NET_SELECTOR && status_code <= NET_LAST_SELECTOR) {
                 length = len == 10U ? net_service_status(
                     status_code, list, g_scratch, sizeof(g_scratch)) : 0U;
                 /* Diagnostic images advertise ATNT only, never the production ABI. */
@@ -1808,6 +1817,7 @@ static void execute_command(void)
             uint16_t payload_length = 0U;
             if (unit != 0U || (list[4] != MEMORY_API_SELECTOR &&
                                list[4] != GLYPH_API_SELECTOR &&
+                               list[4] != ONEWWW_SELECTOR &&
                                list[4] != NET_SELECTOR)) {
                 result = ERR_BADCTL;
                 sp_response_append(result);
@@ -1824,12 +1834,16 @@ static void execute_command(void)
                 (uint32_t)payload_length + 12U != len) {
                 result = (list[4] == NET_SELECTOR)
                     ? net_service_control(NULL, 0U)
+                    : (list[4] == ONEWWW_SELECTOR)
+                    ? onewww_control(NULL, 0U)
                     : (list[4] == GLYPH_API_SELECTOR)
                     ? glyph_api_execute(NULL, 0U, &sp_glyph_backend)
                     : memory_api_execute(NULL, 0U, &memory_api_hardware);
             } else {
                 result = (list[4] == NET_SELECTOR)
                     ? net_service_control(g_cmd_buf + 12U, payload_length)
+                    : (list[4] == ONEWWW_SELECTOR)
+                    ? onewww_control(g_cmd_buf + 12U, payload_length)
                     : (list[4] == GLYPH_API_SELECTOR)
                     ? glyph_api_execute(g_cmd_buf + 12U, payload_length,
                                         &sp_glyph_backend)

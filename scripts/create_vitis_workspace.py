@@ -1220,6 +1220,12 @@ run_step(
         "frontend",
         [
             "../../../ps_sources/frontend/apple_fb_handoff.c",
+            "../../../ps_sources/frontend/onewww.c",
+            "../../../ps_sources/frontend/onewww_render.c",
+            "../../../ps_sources/frontend/onewww_font_data.c",
+            "../../../ps_sources/frontend/onewww_home_page.c",
+            "../../../ps_sources/frontend/onewww_dom.c",
+            "../../../ps_sources/frontend/onewww_entities.c",
             "../../../ps_sources/frontend/ad8088_machine.c",
             "../../../ps_sources/frontend/ad8088_service.c",
             "../../../ps_sources/frontend/pc_transporter_machine.c",

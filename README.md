@@ -5,9 +5,10 @@ around a Xilinx Zynq-7020. The PL handles cycle-sensitive Apple bus behavior;
 the two ARM cores provide storage, video rendering, USB services, configuration,
 and higher-level peripheral emulation.
 
-The current stable firmware is [F1.3.8](docs/releases/F1.3.8.md). It adds
-the picture, page and form services for the TINIBROWSER web browser, faster
-downloads, and fixes for PAL-accurate video timing and SSI-263 speech levels.
+The current stable firmware is [F1.3.9](docs/releases/F1.3.9.md). It adds
+the [ONEWWW web browser](README_ONEWWW.md), which the card draws in true
+colour on its HDMI output, and an FTP server for three clients with active
+mode.
 
 ## Virtual Hardware
 

@@ -21,14 +21,29 @@ def test_ftp_protocol_and_subnet_gate() -> None:
 
     require("FTP_CONTROL_PORT         21U" in source and
             "FTP_PASSIVE_PORT         50000U" in source,
-            "FTP must use port 21 and one fixed passive data port")
+            "FTP must use port 21 and passive data ports from 50000")
     require("peer_on_local_subnet(peer) == 0U" in source and
-            "memcmp(peer, g_ftp.control_peer, sizeof(peer)) != 0" in source,
+            "memcmp(peer, s->control_peer, sizeof(peer)) != 0" in source,
             "control and data connections must enforce the local subnet and same peer")
-    require("Active mode is disabled; use PASV or EPSV" in source and
-            "strcmp(line, \"PASV\")" in source and
-            "strcmp(line, \"EPSV\")" in source,
-            "the server must be passive-only")
+    require("strcmp(line, \"PASV\")" in source and
+            "strcmp(line, \"EPSV\")" in source and
+            "strcmp(line, \"PORT\")" in source and
+            "strcmp(line, \"EPRT\")" in source,
+            "the server must accept passive and active mode")
+    require("v[0] != s->control_peer[0]" in source and
+            "v[3] != s->control_peer[3]" in source,
+            "active mode must connect only to the control client")
+    require("FTP_SESSION_COUNT        3U" in source and
+            "static void ftp_listener_poll" in source and
+            "static uint8_t data_socket_alloc" in source and
+            "static void socket_release" in source and
+            "FTP_LINGER_MS" in source,
+            "FTP must serve three clients on the four shared sockets")
+    require("%s-Waiting for the data socket." in source,
+            "a passive reply that waits for a socket must keep the client alive")
+    require("const size_t room = sizeof(s->control_out) - s->control_out_len;"
+            in source,
+            "a new reply must go behind a reply that waits")
     for command in ("USER", "PASS", "LIST", "NLST", "RETR", "STOR",
                     "DELE", "MKD", "RMD", "RNFR", "RNTO"):
         require(f'strcmp(line, "{command}")' in source,
@@ -43,18 +58,18 @@ def test_ftp_protocol_and_subnet_gate() -> None:
     prepare_start = source.index("static int ftp_prepare_transfer")
     prepare_end = source.index("static void command_upper", prepare_start)
     prepare = source[prepare_start:prepare_end]
-    accept_start = source.index("static void ftp_data_accept_poll")
+    accept_start = source.index("static uint8_t ftp_data_connect_poll")
     accept_end = source.index("static int ftp_format_list_line", accept_start)
     accept = source[accept_start:accept_end]
-    peer_check = accept.index("memcmp(peer, g_ftp.control_peer")
-    store_open = accept.index("ftp_open_store_file()", peer_check)
+    peer_check = accept.index("memcmp(peer, s->control_peer")
+    store_open = accept.index("ftp_open_store_file(s)", peer_check)
     require("FA_CREATE_ALWAYS" not in prepare and
             "pending_stor_path" in prepare and
             peer_check < store_open,
             "STOR must create its file only after the data peer is verified")
     reject = accept[peer_check:store_open]
-    require("socket_listen(FTP_DATA_SOCKET, FTP_PASSIVE_PORT)" in reject and
-            "ftp_abort_transfer();" not in reject.split(
+    require("socket_listen(s->data_socket, s->data_port)" in reject and
+            "ftp_abort_transfer(s);" not in reject.split(
                 "if (socket_listen", 1)[0],
             "a wrong data peer must be dropped and the passive transfer kept")
 
@@ -65,8 +80,8 @@ def test_directory_listing_finishes_with_tcp_eof() -> None:
     start = source.index("static void ftp_finish_transfer")
     end = source.index("static int normalize_virtual_path", start)
     finish = source[start:end]
-    require("socket_disconnect(FTP_DATA_SOCKET);" in finish and
-            "socket_close(FTP_DATA_SOCKET);" not in finish and
+    require("socket_release(s->data_socket);" in finish and
+            "socket_close(" not in finish and
             "uthernet2_w5100_socket_command(socket, W5100_CR_DISCON)" in source,
             "completed data transfers must send TCP FIN instead of dropping the socket")
     require('strcmp(virtual_path, "/") != 0' in source,
@@ -77,7 +92,7 @@ def test_directory_listing_finishes_with_tcp_eof() -> None:
     poll = source[poll_start:poll_end]
     require("status != W5100_SR_ESTABLISHED && "
             "status != W5100_SR_CLOSE_WAIT" in poll and
-            "ftp_send_transfer_poll();" in poll and
+            "ftp_send_transfer_poll(s);" in poll and
             "else if (status == W5100_SR_CLOSE_WAIT)" not in poll,
             "RETR and LIST must keep sending after the client half-closes")
 
@@ -91,8 +106,13 @@ def test_direct_transfer_path_with_tagged_completion() -> None:
     hdl_sources = read("hdl/hdl_sources.txt")
 
     require("FTP_DATA_BUFFER_LEN      1024U" in source and
-            "FTP_SEND_CHUNK_LEN" not in source,
-            "FTP must use the proven 1KB transfer buffer")
+            "FTP_STORE_BUFFER_LEN     32768U" in source and
+            "store_buffer[FTP_STORE_BUFFER_LEN] __attribute__((aligned(32)))"
+            in source and
+            "return socket <= 1U ? 1460U : 1024U;" in source and
+            "chunk > socket_tx_size(s->data_socket)" in source,
+            "FTP must move file data in 32KB SD blocks and send no more "
+            "than one TCP segment for each SEND (4KB sends gave 100 kB/s)")
     require("W5100_SOCKET_MEM_4_2_1_1 0x06U" in control_h and
             "0x4000U, 0x5000U, 0x5800U, 0x5C00U" in control and
             "0x6000U, 0x7000U, 0x7800U, 0x7C00U" in control and
@@ -117,14 +137,14 @@ def test_direct_transfer_path_with_tagged_completion() -> None:
     require("data_buffer[FTP_DATA_BUFFER_LEN] __attribute__((aligned(32)))" in source and
             "read_verify_buffer" not in source and
             "ftp_read_verified" not in source and
-            "f_read(&g_ftp.file" in source and
+            "f_read(&s->file" in source and
             "FTP_TX_VERIFY_ATTEMPTS" not in source,
             "FTP must read each block once into a cache-line-aligned DMA buffer")
     require("transfer_eof" not in source and
-            source.count("socket_send_start(") == 2 and
+            source.count("socket_send_start(") == 3 and
             "static int socket_send_buffer" in source and
             "static void ftp_send_data_buffer" in source and
-            source.count("ftp_reset_transfer_state();") == 2,
+            source.count("ftp_reset_transfer_state(s);") == 2,
             "FTP must share send/reset helpers and remove the dead EOF flag")
 
 

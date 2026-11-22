@@ -783,8 +783,9 @@ static const uint16_t s_picture_palette[16] = {
 
 static void picture_rgb(int x, int y, int h, int *r, int *g, int *b)
 {
-    /* x is 0..319 (two screen pixels each), y is 0..h-1. */
-    const int sx = 2 * x - 440, sy = y - (h * 5) / 9;
+    /* x is 0..319, y is 0..h-1. The page shows the picture with the same
+     * scale in x and y, so a circle here is a circle on the screen. */
+    const int sx = x - 220, sy = y - (h * 5) / 9;
     const int hill = (h * 7) / 10 + (((x * 7) % 61) - 30) / 6 +
                      ((x - 160) * (x - 160)) / 1400;
     const int t = (y * 255) / h;
@@ -799,7 +800,7 @@ static void picture_rgb(int x, int y, int h, int *r, int *g, int *b)
         *r = 20 + d; *g = 70 + 3 * d; *b = 20 + d;
         return;
     }
-    if (sx * sx + sy * sy < 34 * 34) { *r = 255; *g = 240; *b = 150; return; }
+    if (sx * sx + sy * sy < 22 * 22) { *r = 255; *g = 240; *b = 150; return; }
     if (t < 128) {
         *r = 34 + (t * 85) / 128; *g = 34 + (t * 136) / 128;
         *b = 102 + (t * 153) / 128;
@@ -1286,7 +1287,7 @@ static void walk_block(flow_t *f, const onewww_node_t *n, text_t tx,
     const int indent = f->indent, right = f->right;
     const uint8_t align = f->align;
     const uint16_t paper = f->paper;
-    int y0, edge0, edge1, box = -1;
+    int y0, edge0, edge1, box0, box1, box = -1;
 
     flow_break(f, before, cs->margin_top);
     if (cs->clear != 0U) floats_clear(f, cs->clear);
@@ -1317,12 +1318,20 @@ static void walk_block(flow_t *f, const onewww_node_t *n, text_t tx,
         f->indent = indent; f->right = right;
         edge0 = f->x0 + indent; edge1 = f->x0 + f->w - right;
     }
+    /* The paper of a block that touches the page margin goes on to the
+     * edge of the screen, as on a page with no body margin. The text and
+     * the borders keep the margin. */
+    box0 = edge0; box1 = edge1;
+    if (f->top_level && f->x0 == MARGIN && f->w == PAGE_WIDTH - 2 * MARGIN) {
+        if (box0 == MARGIN) box0 = 0;
+        if (box1 == PAGE_WIDTH - MARGIN) box1 = PAGE_WIDTH;
+    }
     f->align = cs->align;
     if (cs->background != OW_NO_COLOR) {
         /* The box goes into the list before the content; its height is
          * known at the end. */
         f->paper = cs->background;
-        if (f->s != NULL) box = dl_rect(f->s, edge0, y0, edge1 - edge0, 0, cs->background);
+        if (f->s != NULL) box = dl_rect(f->s, box0, y0, box1 - box0, 0, cs->background);
     }
     if (cs->border & OW_SIDE_TOP) { f->y += 2; f->gap = 0; }
     if (cs->padding_top != 0) { f->y += cs->padding_top; f->gap = 0; }
@@ -1342,7 +1351,7 @@ static void walk_block(flow_t *f, const onewww_node_t *n, text_t tx,
     if (cs->border & OW_SIDE_BOTTOM) { f->y += 2; f->gap = 0; }
     if (box >= 0) {
         (void)surface_need(f->s, (uint32_t)f->y);
-        dl_box(f->s, box, edge0, y0, edge1 - edge0, f->y - y0);
+        dl_box(f->s, box, box0, y0, box1 - box0, f->y - y0);
     }
     if (cs->border != 0U && f->s != NULL && surface_need(f->s, (uint32_t)f->y) == 0 &&
         f->y > y0) {

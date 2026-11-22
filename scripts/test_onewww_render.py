@@ -253,7 +253,7 @@ def main():
         decode(fields).save(OUT / f"{name}{top}.png")
         assert len(fields) == 640 * 400 * 4
     if page == "-":
-        assert 600 < rows < 60000 and links == 6, (rows, links)
+        assert 600 < rows < 60000 and links == 7, (rows, links)
         assert result[2] == "https://appletini.org/", result[2]
         check_forms(exe, env)
     print(f"PASS: {rows} rows, {links} links; pictures in {OUT}")

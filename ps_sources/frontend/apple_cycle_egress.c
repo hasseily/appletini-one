@@ -38,14 +38,14 @@ volatile uint32_t g_poll_calls         = 0U;
 volatile uint32_t g_oversized_drains   = 0U;
 
 /* --- Internal state ------------------------------------------------- */
-/* PS-side mirror of the FPGA's consumer pointer. We track it locally and
- * batch-write to ACE_REG_CFG_CONSUMER_PTR at the end of each drain pass. */
+/* PS-side mirror of the FPGA's consumer pointer. */
 static uint32_t s_consumer_ptr;
 
 /* Cached lookahead batch. The ring is non-cacheable, so rereading two future
  * records for every rendered cycle costs far more than the phase correction.
  * Copy each record once, then do all lookahead work from this cached array. */
 #define ACE_LOOKAHEAD_BATCH_RECORDS 256U
+#define ACE_CONSUMER_RELEASE_BYTES (2048U * ACE_RECORD_BYTES)
 static uint64_t s_lookahead_batch[ACE_LOOKAHEAD_BATCH_RECORDS];
 static void (*s_checkpoint)(void);
 
@@ -221,6 +221,7 @@ void apple_cycle_egress_poll(void)
     if (consumer == producer) {
         return;  /* empty */
     }
+    uint32_t released_consumer = consumer;
 
     /* (3) Drain in cached batches. Each non-cacheable ring slot is read once
      * in the common path; phase lookahead then reads normal cached memory. */
@@ -350,9 +351,21 @@ void apple_cycle_egress_poll(void)
         if (processed == 0u) {
             break;
         }
+
+        /* A large snapshot can take much longer to render than it takes
+         * the FPGA to fill the remaining space. Release processed records
+         * during a long drain so the producer can reuse their ring slots.
+         * Keep any undispatched lookahead tail in the ring for the next batch. */
+        if (((consumer - released_consumer) & ACE_RING_MASK) >=
+            ACE_CONSUMER_RELEASE_BYTES) {
+            REG_WRITE(ACE_REG_CFG_CONSUMER_PTR, consumer);
+            released_consumer = consumer;
+        }
     }
 
-    /* (4) Publish new consumer pointer. Single AxiSimple write. */
+    /* (4) Release the remainder of the processed records. */
     s_consumer_ptr = consumer;
-    REG_WRITE(ACE_REG_CFG_CONSUMER_PTR, s_consumer_ptr);
+    if (consumer != released_consumer) {
+        REG_WRITE(ACE_REG_CFG_CONSUMER_PTR, consumer);
+    }
 }

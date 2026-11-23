@@ -37,3 +37,24 @@ and PAL timing through repeated resets, active-display and frame boundaries,
 a reset held for more than one frame, reset with PHI0 stopped, and later ROM
 commands. It also checks calibration after host clock loss, ONE//e reset
 behavior, and return to physical PHI0.
+
+## ONE//e legacy flicker on F1.3.9
+
+With ONE//e in NTSC and the legacy picture visible at 1920×1080, the 1 MiB
+Apple video capture ring reached 1,048,560 bytes in use and reported gaps.
+The HDMI scanout underrun and AXI read error counts stayed flat. The ARM
+consumer previously released ring space only at the end of a drain. It now
+releases processed records in increments during long drains and retains any
+records that still need lookahead. This change alone did not stop the gaps
+in an HGR menu test on the board.
+
+The composite NTSC renderer now selects its lookup table once per cell and
+keeps the phase and signal history local until it has emitted the cell.
+Capture checkpoints poll the CGA raster only when CGA graphics capture is
+active. The CPU1 main loop still checks for changes to the CGA mode.
+
+On the same ONE//e, the F1.3.9dev24 candidate rendered 3,362 frames over
+56 seconds of NTSC tests. The HGR launcher ran at 1920×1080, and Ultima V
+ran at 1920×1080 and 1024×768. The samples recorded zero new capture gaps,
+renderer resyncs, HDMI underruns, or AXI read errors. The highest sampled
+ring occupancy was 624 bytes. These checks measure the board counters.

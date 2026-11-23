@@ -401,26 +401,44 @@ void atn_emit_blank_pixels(uint8_t count) {
     g_nLastColumnPixelNTSC = 0U;
 }
 
-/* updatePixels: shift 14 dots out (color burst on) or 7 dots (off),
- * tracking g_nLastColumnPixelNTSC. Bit-for-bit compatible with
- * AppleWin's NTSC.cpp:603-655.
- *
- * Color burst on: 14 dots. Bits ordered LSB-first in `bits[13:0]`.
- * Color burst off: 7 mono dots from bits[6:0]; high 7 bits ignored. */
+/* Shift 14 dots out in LSB-first order, carrying the last dot into the
+ * next cell. The burst selects the colour or monochrome table. */
 void atn_updatePixels(uint16_t bits) {
-    if (!atn_get_color_burst() || s_video_mono_enable != 0U) {
-        for (int i = 0; i < 13; i++) {
-            atn_emit_mono(bits & 1);
-            bits >>= 1;
+    const int use_colour = atn_get_color_burst() && s_video_mono_enable == 0U;
+    if (s_video_mono_enable == 0U &&
+        (s_video_color_mode == APPLE_VIDEO_COLOR_COMPOSITE_MONITOR ||
+         s_video_color_mode == APPLE_VIDEO_COLOR_TV)) {
+        /* Select the table once per cell and keep the dot state in local
+         * variables while emitting pixels on the capture thread. */
+        const int tv = s_video_color_mode == APPLE_VIDEO_COLOR_TV;
+        uint32_t *const pixels = g_pVideoAddress;
+        unsigned history = (unsigned)g_nSignalBitsNTSC;
+        unsigned phase = (unsigned)g_nColorPhaseNTSC;
+        if (use_colour) {
+            atn_bgra_t (*const table)[ATN_NUM_SEQUENCES] =
+                tv ? g_aHueColorTV : g_aHueMonitor;
+            for (unsigned dot = 0; dot < 14; dot++) {
+                history = ((history << 1) | ((bits >> dot) & 1U)) & 0xFFFU;
+                pixels[dot] = atn_pack_bgra(table[(phase + dot) & 3U][history]);
+            }
+        } else {
+            const atn_bgra_t *const table = tv ? g_aBnwColorTV : g_aBnWMonitor;
+            for (unsigned dot = 0; dot < 14; dot++) {
+                history = ((history << 1) | ((bits >> dot) & 1U)) & 0xFFFU;
+                pixels[dot] = atn_pack_bgra(table[history]);
+            }
         }
-        atn_emit_mono(bits & 1);
-        g_nLastColumnPixelNTSC = bits & 1;
+        g_pVideoAddress += 14;
+        g_nSignalBitsNTSC = (int)history;
+        g_nColorPhaseNTSC = (int)((phase + 14U) & 3U);
     } else {
-        for (int i = 0; i < 13; i++) {
-            atn_emit_color(bits & 1);
-            bits >>= 1;
+        for (unsigned dot = 0; dot < 14; dot++) {
+            if (use_colour) {
+                atn_emit_color((bits >> dot) & 1U);
+            } else {
+                atn_emit_mono((bits >> dot) & 1U);
+            }
         }
-        atn_emit_color(bits & 1);
-        g_nLastColumnPixelNTSC = bits & 1;
     }
+    g_nLastColumnPixelNTSC = (bits >> 13) & 1U;
 }

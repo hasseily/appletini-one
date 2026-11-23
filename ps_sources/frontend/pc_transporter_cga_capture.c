@@ -288,6 +288,15 @@ void pc_transporter_cga_capture_poll(void)
     }
 }
 
+void pc_transporter_cga_capture_checkpoint(void)
+{
+    /* The CPU1 main loop probes for a CGA mode change. Between those
+     * probes only active graphics capture needs raster checks. */
+    if (capture_enabled) {
+        pc_transporter_cga_capture_poll();
+    }
+}
+
 const volatile uint8_t *pc_transporter_cga_capture_claim(uint32_t state,
                                                         uint32_t geometry,
                                                         uint32_t crtc_low)

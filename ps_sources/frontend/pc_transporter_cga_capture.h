@@ -9,6 +9,7 @@ void pc_transporter_cga_capture_reset(void);
 /* CPU1 maps the shared section, then polls it from its foreground loop. */
 void pc_transporter_cga_capture_init(void);
 void pc_transporter_cga_capture_poll(void);
+void pc_transporter_cga_capture_checkpoint(void);
 
 /* CPU0 owns a successful claim until release. Each row is packed in display
  * order with two bytes per horizontal displayed CRTC character. */

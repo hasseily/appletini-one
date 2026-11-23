@@ -338,7 +338,7 @@ int main(void)
     }
     linear_text_overlay_capture_init();
     pc_transporter_cga_capture_init();
-    apple_cycle_egress_set_checkpoint(pc_transporter_cga_capture_poll);
+    apple_cycle_egress_set_checkpoint(pc_transporter_cga_capture_checkpoint);
 
     REG_WRITE(RESET_RELEASE_REG,
               RESET_RELEASE_CPU1_READY_BIT);

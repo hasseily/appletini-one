@@ -34,6 +34,7 @@ static uint32_t crtc_low = CRTC_LOW;
 static uint32_t beam;
 static unsigned beam_reads;
 static unsigned mmio_reads;
+static unsigned timer_reads;
 static bool change_beam_during_copy;
 static bool change_mode_during_copy;
 static bool race_claim;
@@ -51,6 +52,7 @@ void Xil_DCacheFlushRange(uintptr_t address, unsigned length)
 
 void XTime_GetTime(XTime *value)
 {
+    timer_reads++;
     *value = now;
 }
 
@@ -144,6 +146,8 @@ int main(void)
 #endif
     pc_transporter_cga_capture_reset();
     pc_transporter_cga_capture_init();
+    pc_transporter_cga_capture_checkpoint();
+    assert(timer_reads == 0U && mmio_reads == 0U);
     pc_transporter_cga_capture_poll();
     assert(mmio_reads == 1U);
     for (unsigned i = 0; i < 5U; i++) {
@@ -154,15 +158,16 @@ int main(void)
     status = PCT_ENABLED;
     now += (uint64_t)(COUNTS_PER_SECOND) / 1000U;
     seed_vram(1U);
-    for (unsigned line = 0; line < HEIGHT; line++) {
-        poll_line(1U, line);
-        if (line == 0U) {
-            /* A second active sample cannot replace the captured row. */
-            vram[START_BYTE] ^= 0xFFU;
-            poll_line(1U, 0U);
-            assert(beam_reads == 1U);
-            vram[START_BYTE] ^= 0xFFU;
-        }
+    poll_line(1U, 0U);
+    /* A second active sample cannot replace the captured row. */
+    vram[START_BYTE] ^= 0xFFU;
+    set_line(1U, 0U);
+    pc_transporter_cga_capture_checkpoint();
+    assert(beam_reads == 1U);
+    vram[START_BYTE] ^= 0xFFU;
+    for (unsigned line = 1U; line < HEIGHT; line++) {
+        set_line(1U, line);
+        pc_transporter_cga_capture_checkpoint();
     }
     check_stats(1U, 0U);
     assert(pc_transporter_cga_capture_claim(MODE_STATE, GEOMETRY ^ 1U, CRTC_LOW) == NULL);

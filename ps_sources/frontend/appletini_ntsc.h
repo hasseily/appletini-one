@@ -124,8 +124,7 @@ void atn_emit_color(uint16_t signal);
 void atn_emit_mono(uint16_t signal);
 void atn_emit_blank_pixels(uint8_t count);
 
-/* Per-mode helper from NTSC.cpp:603. Shifts 14 dots out (or 7 dots when
- * color burst is off), tracking g_nLastColumnPixelNTSC. */
+/* Shifts 14 dots out, tracking g_nLastColumnPixelNTSC. */
 void atn_updatePixels(uint16_t bits);
 
 /* Color-burst helper. True when color is active (g_nColorBurstPixels >= 2). */

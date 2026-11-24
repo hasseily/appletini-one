@@ -262,6 +262,67 @@ module w65c02_core #(
     assign relative_target = relative_base + {{8{data_in[7]}}, data_in};
     assign nmi_edge = nmi_last_q && !nmi_n;
 
+    /* Bus address source of the current state, one-hot and registered with
+     * the state. No bit set: the address is PC. A_WRITE marks a write cycle.
+     * The bus address is then a select of registers and constants. */
+    localparam int A_STACK    = 0;   // {$01, S}
+    localparam int A_EA       = 1;
+    localparam int A_DUMMY    = 2;   // dummy_addr_q
+    localparam int A_ZP       = 3;   // {$00, operand}
+    localparam int A_PTR      = 4;   // {$00, pointer}
+    localparam int A_PTR_INC  = 5;
+    localparam int A_VEC_LO   = 6;
+    localparam int A_VEC_HI   = 7;
+    localparam int A_RESET_LO = 8;   // $FFFC
+    localparam int A_RESET_HI = 9;   // $FFFD
+    localparam int A_EA_INC   = 10;
+    localparam int A_EA_INCW  = 11;
+    localparam int A_BRANCH   = 12;  // {PC high, target low}
+    localparam int A_WRITE    = 13;
+    localparam int A_BITS     = 14;
+    logic [A_BITS-1:0] asel_q;
+
+    function automatic logic [A_BITS-1:0] asel_of(input state_t state);
+        begin
+            asel_of = '0;
+            case (state)
+                ST_RESET_STACK_0, ST_RESET_STACK_1, ST_RESET_STACK_2,
+                ST_PULL_DUMMY_STACK, ST_RTS_DUMMY_STACK, ST_RTI_DUMMY_STACK,
+                ST_PULL_READ, ST_RTS_PULL_LO, ST_RTS_PULL_HI,
+                ST_RTI_PULL_P, ST_RTI_PULL_LO, ST_RTI_PULL_HI,
+                ST_JSR_STACK_DUMMY:
+                    asel_of[A_STACK] = 1'b1;
+                ST_PUSH_WRITE, ST_JSR_PUSH_HI, ST_JSR_PUSH_LO,
+                ST_INT_PUSH_HI, ST_INT_PUSH_LO, ST_INT_PUSH_P: begin
+                    asel_of[A_STACK] = 1'b1;
+                    asel_of[A_WRITE] = 1'b1;
+                end
+                ST_MEM_READ, ST_DECIMAL_EXTRA, ST_RMW_READ, ST_RMW_MODIFY,
+                ST_JMP_IND_LO, ST_JMP_X_LO:
+                    asel_of[A_EA] = 1'b1;
+                ST_MEM_WRITE, ST_RMW_WRITE: begin
+                    asel_of[A_EA] = 1'b1;
+                    asel_of[A_WRITE] = 1'b1;
+                end
+                ST_INDEX_DUMMY, ST_NOP_ABS_DUMMY, ST_JMP_X_DUMMY:
+                    asel_of[A_DUMMY] = 1'b1;
+                ST_ZP_INDEX, ST_INDX_DUMMY,
+                ST_BIT_BRANCH_READ, ST_BIT_BRANCH_REPEAT:
+                    asel_of[A_ZP] = 1'b1;
+                ST_PTR_LO: asel_of[A_PTR] = 1'b1;
+                ST_PTR_HI: asel_of[A_PTR_INC] = 1'b1;
+                ST_INT_VECTOR_LO: asel_of[A_VEC_LO] = 1'b1;
+                ST_INT_VECTOR_HI: asel_of[A_VEC_HI] = 1'b1;
+                ST_RESET_VECTOR_LO: asel_of[A_RESET_LO] = 1'b1;
+                ST_RESET_VECTOR_HI: asel_of[A_RESET_HI] = 1'b1;
+                ST_JMP_IND_HI: asel_of[A_EA_INCW] = 1'b1;
+                ST_JMP_IND_LAST, ST_JMP_X_HI: asel_of[A_EA_INC] = 1'b1;
+                ST_BRANCH_CROSS: asel_of[A_BRANCH] = 1'b1;
+                default: begin end
+            endcase
+        end
+    endfunction
+
     function automatic kind_t kind_for_op(input op_t op);
         case (op)
             OP_STA, OP_STX, OP_STY, OP_STZ:
@@ -1000,184 +1061,49 @@ module w65c02_core #(
     assign debug_p  = p_q;
 
     always_comb begin
-        addr = pc_q;
-        data_out = 8'h00;
-        rwb = 1'b1;
-        sync = 1'b0;
-        vpb_n = 1'b1;
-        mlb_n = 1'b1;
         waiting = (state_q == ST_WAIT);
         stopped = (state_q == ST_STOP);
+        sync    = (state_q == ST_FETCH);
+        vpb_n   = !(state_q == ST_RESET_VECTOR_LO || state_q == ST_RESET_VECTOR_HI ||
+                    state_q == ST_INT_VECTOR_LO   || state_q == ST_INT_VECTOR_HI);
+        mlb_n   = !(state_q == ST_RMW_MODIFY || state_q == ST_RMW_WRITE);
+        rwb     = !asel_q[A_WRITE];
 
-        case (state_q)
-            ST_RESET_STACK_0,
-            ST_RESET_STACK_1,
-            ST_RESET_STACK_2:
-                addr = {8'h01, s_q};
-
-            ST_RESET_VECTOR_LO: begin addr = 16'hFFFC; vpb_n = 1'b0; end
-            ST_RESET_VECTOR_HI: begin addr = 16'hFFFD; vpb_n = 1'b0; end
-
-            ST_FETCH: begin
-                addr = pc_q;
-                sync = 1'b1;
-            end
-
-            ST_OPERAND,
-            ST_ABS_HI,
-            ST_IMPLIED,
-            ST_BRANCH_DUMMY,
-            ST_BIT_BRANCH_OFFSET,
-            ST_BIT_BRANCH_DUMMY,
-            ST_BIT_BRANCH_CROSS,
-            ST_PUSH_DUMMY,
-            ST_PULL_DUMMY_PC,
-            ST_JSR_LOW,
-            ST_RTS_DUMMY_PC,
-            ST_RTI_DUMMY_PC,
-            ST_BRK_SIGNATURE,
-            ST_INT_DUMMY,
-            ST_WAI_DUMMY,
-            ST_STP_DUMMY:
-                addr = pc_q;
-
-            ST_BRANCH_CROSS:
-                addr = {pc_q[15:8], target_q[7:0]};
-
-            ST_ZP_INDEX,
-            ST_INDX_DUMMY:
-                addr = {8'h00, operand_q};
-
-            ST_INDEX_DUMMY: begin
-                // Apple-compatible 65C02s retain the NMOS effective-address
-                // false read for same-page STA abs,X/abs,Y.  On a page
-                // crossing, the CMOS cycle instead reads the final
-                // instruction byte.
-                if ((op_q == OP_STA) &&
-                    (mode_q == AM_ABSX || mode_q == AM_ABSY) &&
-                    !page_cross_q)
-                    addr = ea_q;
-                else
-                    addr = dummy_addr_q;        // pc - 1
-            end
-
-            ST_NOP_ABS_DUMMY:
-                addr = dummy_addr_q;            // pc - 1
-
-            ST_PTR_LO:
-                addr = {8'h00, ptr_q};
-            ST_PTR_HI:
-                addr = {8'h00, ptr_inc_q};
-
-            ST_MEM_READ,
-            ST_DECIMAL_EXTRA,
-            ST_RMW_READ:
-                addr = ea_q;
-
-            ST_MEM_WRITE: begin
-                addr = ea_q;
-                data_out = store_value(op_q);
-                rwb = 1'b0;
-            end
-
-            ST_RMW_MODIFY: begin
-                addr = ea_q;
-                mlb_n = 1'b0;
-            end
-            ST_RMW_WRITE: begin
-                addr = ea_q;
-                data_out = result_q;
-                rwb = 1'b0;
-                mlb_n = 1'b0;
-            end
-
-            ST_BIT_BRANCH_READ,
-            ST_BIT_BRANCH_REPEAT:
-                addr = {8'h00, operand_q};
-
-            ST_PUSH_WRITE: begin
-                addr = {8'h01, s_q};
-                data_out = stack_push_value(op_q);
-                rwb = 1'b0;
-            end
-
-            ST_PULL_DUMMY_STACK,
-            ST_RTS_DUMMY_STACK,
-            ST_RTI_DUMMY_STACK:
-                addr = {8'h01, s_q};
-
-            ST_PULL_READ,
-            ST_RTS_PULL_LO,
-            ST_RTS_PULL_HI,
-            ST_RTI_PULL_P,
-            ST_RTI_PULL_LO,
-            ST_RTI_PULL_HI:
-                addr = {8'h01, s_q};
-
-            ST_JSR_STACK_DUMMY:
-                addr = {8'h01, s_q};
-            ST_JSR_PUSH_HI: begin
-                addr = {8'h01, s_q};
-                data_out = pc_q[15:8];
-                rwb = 1'b0;
-            end
-            ST_JSR_PUSH_LO: begin
-                addr = {8'h01, s_q};
-                data_out = pc_q[7:0];
-                rwb = 1'b0;
-            end
-            ST_JSR_HIGH:
-                addr = pc_q;
-
-            ST_RTS_FINAL:
-                addr = pc_q;
-
-            ST_INT_PUSH_HI: begin
-                addr = {8'h01, s_q};
-                data_out = pc_q[15:8];
-                rwb = 1'b0;
-            end
-            ST_INT_PUSH_LO: begin
-                addr = {8'h01, s_q};
-                data_out = pc_q[7:0];
-                rwb = 1'b0;
-            end
-            ST_INT_PUSH_P: begin
-                addr = {8'h01, s_q};
-                data_out = (op_q == OP_BRK) ? (p_q | 8'h30) : (p_q | 8'h20);
-                data_out[4] = (op_q == OP_BRK);
-                rwb = 1'b0;
-            end
-            ST_INT_VECTOR_LO: begin addr = vector_q; vpb_n = 1'b0; end
+        // The select bits for the address are one-hot (see asel_of).
+        unique case (1'b1)
+            asel_q[A_STACK]:    addr = {8'h01, s_q};
+            asel_q[A_EA]:       addr = ea_q;
+            // A discarded read. Same-page STA abs,X/abs,Y reads the
+            // effective address, as Apple-compatible 65C02s do; the other
+            // cases read the last instruction byte. The step before chose.
+            asel_q[A_DUMMY]:    addr = dummy_addr_q;
+            asel_q[A_ZP]:       addr = {8'h00, operand_q};
+            asel_q[A_PTR]:      addr = {8'h00, ptr_q};
+            asel_q[A_PTR_INC]:  addr = {8'h00, ptr_inc_q};
+            asel_q[A_VEC_LO]:   addr = vector_q;
             // The vectors are $FFFA and $FFFE: plus one sets bit 0.
-            ST_INT_VECTOR_HI: begin addr = {vector_q[15:1], 1'b1}; vpb_n = 1'b0; end
-
-            ST_JMP_IND_LO:
-                addr = ea_q;
-            ST_JMP_IND_HI:
-                addr = ea_incw_q;
-            ST_JMP_IND_LAST:
-                addr = ea_inc_q;
-            ST_JMP_X_DUMMY:
-                addr = dummy_addr_q;            // pc - 2
-            ST_JMP_X_LO:
-                addr = ea_q;
-            ST_JMP_X_HI:
-                addr = ea_inc_q;
-
-            ST_WAIT,
-            ST_STOP:
-                addr = pc_q;
-
-            default: begin end
+            asel_q[A_VEC_HI]:   addr = {vector_q[15:1], 1'b1};
+            asel_q[A_RESET_LO]: addr = 16'hFFFC;
+            asel_q[A_RESET_HI]: addr = 16'hFFFD;
+            asel_q[A_EA_INC]:   addr = ea_inc_q;
+            asel_q[A_EA_INCW]:  addr = ea_incw_q;
+            asel_q[A_BRANCH]:   addr = {pc_q[15:8], target_q[7:0]};
+            default:            addr = pc_q;
         endcase
 
-        // The W65C02S decimal correction cycle repeats the effective-address
-        // read.  Immediate ADC/SBC use the stable internal zero-page dummy
-        // addresses represented by the WDC single-step reference model.
-        if (state_q == ST_DECIMAL_EXTRA && mode_q == AM_IMM) begin
-            addr = (op_q == OP_ADC) ? 16'h007F : 16'h0000;
-        end
+        data_out = 8'h00;
+        case (state_q)
+            ST_MEM_WRITE:  data_out = store_value(op_q);
+            ST_RMW_WRITE:  data_out = result_q;
+            ST_PUSH_WRITE: data_out = stack_push_value(op_q);
+            ST_JSR_PUSH_HI, ST_INT_PUSH_HI: data_out = pc_q[15:8];
+            ST_JSR_PUSH_LO, ST_INT_PUSH_LO: data_out = pc_q[7:0];
+            ST_INT_PUSH_P: begin
+                data_out = (op_q == OP_BRK) ? (p_q | 8'h30) : (p_q | 8'h20);
+                data_out[4] = (op_q == OP_BRK);
+            end
+            default: begin end
+        endcase
     end
 
     always_ff @(posedge clk or negedge reset_n) begin
@@ -1190,7 +1116,7 @@ module w65c02_core #(
             y_q <= 8'h00;
             p_q <= 8'h24;
             ir_q <= 8'h00;
-            state_q <= ST_RESET_0;
+            begin state_q <= ST_RESET_0; asel_q <= asel_of(ST_RESET_0); end
             op_q <= OP_NOP;
             mode_q <= AM_IMP;
             kind_q <= KIND_IMPLIED;
@@ -1224,7 +1150,7 @@ module w65c02_core #(
             y_q <= debug_y_in;
             p_q <= normalize_p(debug_p_in);
             ir_q <= 8'h00;
-            state_q <= ST_FETCH;
+            begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
             op_q <= OP_NOP;
             mode_q <= AM_IMP;
             kind_q <= KIND_IMPLIED;
@@ -1268,18 +1194,18 @@ module w65c02_core #(
             if (enable && ready) begin
                 pc_move_q <= PC_MOVE_SAME;
                 case (state_q)
-                    ST_RESET_0: state_q <= ST_RESET_1;
-                    ST_RESET_1: state_q <= ST_RESET_STACK_0;
-                    ST_RESET_STACK_0: begin s_q <= s_q - 8'd1; state_q <= ST_RESET_STACK_1; end
-                    ST_RESET_STACK_1: begin s_q <= s_q - 8'd1; state_q <= ST_RESET_STACK_2; end
-                    ST_RESET_STACK_2: begin s_q <= s_q - 8'd1; state_q <= ST_RESET_VECTOR_LO; end
-                    ST_RESET_VECTOR_LO: begin lo_q <= data_in; state_q <= ST_RESET_VECTOR_HI; end
+                    ST_RESET_0: begin state_q <= ST_RESET_1; asel_q <= asel_of(ST_RESET_1); end
+                    ST_RESET_1: begin state_q <= ST_RESET_STACK_0; asel_q <= asel_of(ST_RESET_STACK_0); end
+                    ST_RESET_STACK_0: begin s_q <= s_q - 8'd1; begin state_q <= ST_RESET_STACK_1; asel_q <= asel_of(ST_RESET_STACK_1); end end
+                    ST_RESET_STACK_1: begin s_q <= s_q - 8'd1; begin state_q <= ST_RESET_STACK_2; asel_q <= asel_of(ST_RESET_STACK_2); end end
+                    ST_RESET_STACK_2: begin s_q <= s_q - 8'd1; begin state_q <= ST_RESET_VECTOR_LO; asel_q <= asel_of(ST_RESET_VECTOR_LO); end end
+                    ST_RESET_VECTOR_LO: begin lo_q <= data_in; begin state_q <= ST_RESET_VECTOR_HI; asel_q <= asel_of(ST_RESET_VECTOR_HI); end end
                     ST_RESET_VECTOR_HI: begin
                         pc_q <= {data_in, lo_q};
                         pc_move_q <= PC_MOVE_JUMP;
                         p_q[P_I] <= 1'b1;
                         p_q[P_D] <= 1'b0;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_FETCH: begin
@@ -1294,43 +1220,43 @@ module w65c02_core #(
                             vector_q <= (nmi_pending_q || nmi_edge)
                                       ? 16'hFFFA : 16'hFFFE;
                             nmi_pending_q <= 1'b0;
-                            state_q <= ST_INT_DUMMY;
+                            begin state_q <= ST_INT_DUMMY; asel_q <= asel_of(ST_INT_DUMMY); end
                         end else begin
                             pc_q <= pc_q + 16'd1;
                             pc_move_q <= PC_MOVE_INC;
 
                             if (fetch_decode.one_cycle) begin
                                 instruction_done <= 1'b1;
-                                state_q <= ST_FETCH;
+                                begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                             end else begin
                                 case (fetch_decode.op)
                                     OP_BRK: begin
                                         vector_q <= 16'hFFFE;
-                                        state_q <= ST_BRK_SIGNATURE;
+                                        begin state_q <= ST_BRK_SIGNATURE; asel_q <= asel_of(ST_BRK_SIGNATURE); end
                                     end
-                                    OP_JSR: state_q <= ST_JSR_LOW;
+                                    OP_JSR: begin state_q <= ST_JSR_LOW; asel_q <= asel_of(ST_JSR_LOW); end
                                     OP_RTS: begin
                                         if (turbo_fetch_skip_pc) begin
                                             s_q <= s_q + 8'd1;
-                                            state_q <= ST_RTS_PULL_LO;
-                                        end else state_q <= ST_RTS_DUMMY_PC;
+                                            begin state_q <= ST_RTS_PULL_LO; asel_q <= asel_of(ST_RTS_PULL_LO); end
+                                        end else begin state_q <= ST_RTS_DUMMY_PC; asel_q <= asel_of(ST_RTS_DUMMY_PC); end
                                     end
                                     OP_RTI: begin
                                         if (turbo_fetch_skip_pc) begin
                                             s_q <= s_q + 8'd1;
-                                            state_q <= ST_RTI_PULL_P;
-                                        end else state_q <= ST_RTI_DUMMY_PC;
+                                            begin state_q <= ST_RTI_PULL_P; asel_q <= asel_of(ST_RTI_PULL_P); end
+                                        end else begin state_q <= ST_RTI_DUMMY_PC; asel_q <= asel_of(ST_RTI_DUMMY_PC); end
                                     end
                                     OP_PHP, OP_PHA, OP_PHX, OP_PHY:
-                                        state_q <= turbo_fetch_skip_pc ? ST_PUSH_WRITE : ST_PUSH_DUMMY;
+                                        begin state_q <= turbo_fetch_skip_pc ? ST_PUSH_WRITE : ST_PUSH_DUMMY; asel_q <= asel_of(turbo_fetch_skip_pc ? ST_PUSH_WRITE : ST_PUSH_DUMMY); end
                                     OP_PLP, OP_PLA, OP_PLX, OP_PLY: begin
                                         if (turbo_fetch_skip_pc) begin
                                             s_q <= s_q + 8'd1;
-                                            state_q <= ST_PULL_READ;
-                                        end else state_q <= ST_PULL_DUMMY_PC;
+                                            begin state_q <= ST_PULL_READ; asel_q <= asel_of(ST_PULL_READ); end
+                                        end else begin state_q <= ST_PULL_DUMMY_PC; asel_q <= asel_of(ST_PULL_DUMMY_PC); end
                                     end
-                                    OP_WAI: state_q <= ST_WAI_DUMMY;
-                                    OP_STP: state_q <= ST_STP_DUMMY;
+                                    OP_WAI: begin state_q <= ST_WAI_DUMMY; asel_q <= asel_of(ST_WAI_DUMMY); end
+                                    OP_STP: begin state_q <= ST_STP_DUMMY; asel_q <= asel_of(ST_STP_DUMMY); end
                                     default: begin
                                         case (fetch_decode.mode)
                                             AM_IMP, AM_ACC: begin
@@ -1340,12 +1266,12 @@ module w65c02_core #(
                                                 if (turbo_fetch_skip_pc) begin
                                                     apply_implied(fetch_decode.op);
                                                     instruction_done <= 1'b1;
-                                                    state_q <= ST_FETCH;
+                                                    begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                                                 end else begin
-                                                    state_q <= ST_IMPLIED;
+                                                    begin state_q <= ST_IMPLIED; asel_q <= asel_of(ST_IMPLIED); end
                                                 end
                                             end
-                                            default: state_q <= ST_OPERAND;
+                                            default: begin state_q <= ST_OPERAND; asel_q <= asel_of(ST_OPERAND); end
                                         endcase
                                     end
                                 endcase
@@ -1356,7 +1282,7 @@ module w65c02_core #(
                     ST_IMPLIED: begin
                         apply_implied(op_q);
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_OPERAND: begin
@@ -1373,24 +1299,24 @@ module w65c02_core #(
                                         decimal_result_q <= sbc_result(a_q, data_in, p_q);
                                     decimal_so_pending_q <= 1'b0;
                                     ea_q <= (op_q == OP_ADC) ? 16'h007F : 16'h0000;
-                                    state_q <= ST_DECIMAL_EXTRA;
+                                    begin state_q <= ST_DECIMAL_EXTRA; asel_q <= asel_of(ST_DECIMAL_EXTRA); end
                                 end else begin
                                     apply_read_value(data_in);
                                     instruction_done <= 1'b1;
-                                    state_q <= ST_FETCH;
+                                    begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                                 end
                             end
 
                             AM_ZP: begin
                                 ea_q <= {8'h00, data_in};
                                 if (op_q == OP_BBR || op_q == OP_BBS)
-                                    state_q <= ST_BIT_BRANCH_READ;
+                                    begin state_q <= ST_BIT_BRANCH_READ; asel_q <= asel_of(ST_BIT_BRANCH_READ); end
                                 else if (kind_q == KIND_WRITE)
-                                    state_q <= ST_MEM_WRITE;
+                                    begin state_q <= ST_MEM_WRITE; asel_q <= asel_of(ST_MEM_WRITE); end
                                 else if (kind_q == KIND_RMW)
-                                    state_q <= ST_RMW_READ;
+                                    begin state_q <= ST_RMW_READ; asel_q <= asel_of(ST_RMW_READ); end
                                 else
-                                    state_q <= ST_MEM_READ;
+                                    begin state_q <= ST_MEM_READ; asel_q <= asel_of(ST_MEM_READ); end
                             end
 
                             AM_ZPX, AM_ZPY: begin
@@ -1402,34 +1328,34 @@ module w65c02_core #(
                                     else
                                         ea_q <= {8'h00, 8'(data_in + x_q)};
                                     if (kind_q == KIND_WRITE)
-                                        state_q <= ST_MEM_WRITE;
+                                        begin state_q <= ST_MEM_WRITE; asel_q <= asel_of(ST_MEM_WRITE); end
                                     else if (kind_q == KIND_RMW)
-                                        state_q <= ST_RMW_READ;
+                                        begin state_q <= ST_RMW_READ; asel_q <= asel_of(ST_RMW_READ); end
                                     else
-                                        state_q <= ST_MEM_READ;
+                                        begin state_q <= ST_MEM_READ; asel_q <= asel_of(ST_MEM_READ); end
                                 end else begin
-                                    state_q <= ST_ZP_INDEX;
+                                    begin state_q <= ST_ZP_INDEX; asel_q <= asel_of(ST_ZP_INDEX); end
                                 end
                             end
 
                             AM_ABS, AM_ABSX, AM_ABSY,
                             AM_ABSIND, AM_ABSXIND: begin
                                 lo_q <= data_in;
-                                state_q <= ST_ABS_HI;
+                                begin state_q <= ST_ABS_HI; asel_q <= asel_of(ST_ABS_HI); end
                             end
 
                             AM_INDX: begin
                                 if (turbo_instruction) begin
                                     ptr_q <= data_in + x_q;
-                                    state_q <= ST_PTR_LO;
+                                    begin state_q <= ST_PTR_LO; asel_q <= asel_of(ST_PTR_LO); end
                                 end else begin
-                                    state_q <= ST_INDX_DUMMY;
+                                    begin state_q <= ST_INDX_DUMMY; asel_q <= asel_of(ST_INDX_DUMMY); end
                                 end
                             end
 
                             AM_INDY, AM_ZPIND: begin
                                 ptr_q <= data_in;
-                                state_q <= ST_PTR_LO;
+                                begin state_q <= ST_PTR_LO; asel_q <= asel_of(ST_PTR_LO); end
                             end
 
                             AM_REL: begin
@@ -1444,28 +1370,35 @@ module w65c02_core #(
                                         pc_q <= relative_target;
                                         pc_move_q <= PC_MOVE_JUMP;
                                         instruction_done <= 1'b1;
-                                        state_q <= ST_FETCH;
+                                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                                     end else begin
-                                        state_q <= ST_BRANCH_DUMMY;
+                                        begin state_q <= ST_BRANCH_DUMMY; asel_q <= asel_of(ST_BRANCH_DUMMY); end
                                     end
                                 end else begin
                                     instruction_done <= 1'b1;
-                                    state_q <= ST_FETCH;
+                                    begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                                 end
                             end
 
-                            AM_ZPREL: state_q <= ST_BIT_BRANCH_READ;
+                            AM_ZPREL: begin state_q <= ST_BIT_BRANCH_READ; asel_q <= asel_of(ST_BIT_BRANCH_READ); end
 
                             default: begin
                                 instruction_done <= 1'b1;
-                                state_q <= ST_FETCH;
+                                begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                             end
                         endcase
                     end
 
                     ST_ABS_HI: begin
-                        // The last instruction byte is at the old PC.
+                        // The last instruction byte is at the old PC. A
+                        // same-page STA abs,X/abs,Y reads its target.
                         dummy_addr_q <= pc_q;
+                        if (op_q == OP_STA && !abs_index_cross) begin
+                            if (mode_q == AM_ABSX)
+                                dummy_addr_q <= {data_in, lo_q} + {8'h00, x_q};
+                            else if (mode_q == AM_ABSY)
+                                dummy_addr_q <= {data_in, lo_q} + {8'h00, y_q};
+                        end
                         hi_q <= data_in;
                         pc_q <= pc_q + 16'd1;
                         pc_move_q <= PC_MOVE_INC;
@@ -1474,24 +1407,24 @@ module w65c02_core #(
                             pc_q <= {data_in, lo_q};
                             pc_move_q <= PC_MOVE_JUMP;
                             instruction_done <= 1'b1;
-                            state_q <= ST_FETCH;
+                            begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                         end else if (op_q == OP_JMP && mode_q == AM_ABSIND) begin
                             ea_q <= {data_in, lo_q};
-                            state_q <= ST_JMP_IND_LO;
+                            begin state_q <= ST_JMP_IND_LO; asel_q <= asel_of(ST_JMP_IND_LO); end
                         end else if (op_q == OP_JMP && mode_q == AM_ABSXIND) begin
                             ea_q <= {data_in, lo_q} + {8'h00, x_q};
                             dummy_addr_q <= pc_q - 16'd1;   // new pc - 2
-                            state_q <= ST_JMP_X_DUMMY;
+                            begin state_q <= ST_JMP_X_DUMMY; asel_q <= asel_of(ST_JMP_X_DUMMY); end
                         end else if (op_q == OP_NOP && mode_q == AM_ABS) begin
-                            state_q <= ST_NOP_ABS_DUMMY;
+                            begin state_q <= ST_NOP_ABS_DUMMY; asel_q <= asel_of(ST_NOP_ABS_DUMMY); end
                         end else if (mode_q == AM_ABS) begin
                             ea_q <= {data_in, lo_q};
                             if (kind_q == KIND_WRITE)
-                                state_q <= ST_MEM_WRITE;
+                                begin state_q <= ST_MEM_WRITE; asel_q <= asel_of(ST_MEM_WRITE); end
                             else if (kind_q == KIND_RMW)
-                                state_q <= ST_RMW_READ;
+                                begin state_q <= ST_RMW_READ; asel_q <= asel_of(ST_RMW_READ); end
                             else
-                                state_q <= ST_MEM_READ;
+                                begin state_q <= ST_MEM_READ; asel_q <= asel_of(ST_MEM_READ); end
                         end else begin
                             if (mode_q == AM_ABSX)
                                 ea_q <= {data_in, lo_q} + {8'h00, x_q};
@@ -1504,13 +1437,13 @@ module w65c02_core #(
                                 page_cross_q <= index_sum_y[8];
 
                             if (abs_index_dummy && !turbo_skip_abs_dummy) begin
-                                state_q <= ST_INDEX_DUMMY;
+                                begin state_q <= ST_INDEX_DUMMY; asel_q <= asel_of(ST_INDEX_DUMMY); end
                             end else if (kind_q == KIND_WRITE) begin
-                                state_q <= ST_MEM_WRITE;
+                                begin state_q <= ST_MEM_WRITE; asel_q <= asel_of(ST_MEM_WRITE); end
                             end else if (kind_q == KIND_RMW) begin
-                                state_q <= ST_RMW_READ;
+                                begin state_q <= ST_RMW_READ; asel_q <= asel_of(ST_RMW_READ); end
                             end else begin
-                                state_q <= ST_MEM_READ;
+                                begin state_q <= ST_MEM_READ; asel_q <= asel_of(ST_MEM_READ); end
                             end
                         end
                     end
@@ -1522,22 +1455,22 @@ module w65c02_core #(
                             ea_q <= {8'h00, operand_q + x_q};
 
                         if (kind_q == KIND_WRITE)
-                            state_q <= ST_MEM_WRITE;
+                            begin state_q <= ST_MEM_WRITE; asel_q <= asel_of(ST_MEM_WRITE); end
                         else if (kind_q == KIND_RMW)
-                            state_q <= ST_RMW_READ;
+                            begin state_q <= ST_RMW_READ; asel_q <= asel_of(ST_RMW_READ); end
                         else
-                            state_q <= ST_MEM_READ;
+                            begin state_q <= ST_MEM_READ; asel_q <= asel_of(ST_MEM_READ); end
                     end
 
                     ST_INDX_DUMMY: begin
                         ptr_q <= operand_q + x_q;
-                        state_q <= ST_PTR_LO;
+                        begin state_q <= ST_PTR_LO; asel_q <= asel_of(ST_PTR_LO); end
                     end
 
                     ST_PTR_LO: begin
                         ptr_inc_q <= ptr_q + 8'd1;
                         lo_q <= data_in;
-                        state_q <= ST_PTR_HI;
+                        begin state_q <= ST_PTR_HI; asel_q <= asel_of(ST_PTR_HI); end
                     end
 
                     ST_PTR_HI: begin
@@ -1548,27 +1481,27 @@ module w65c02_core #(
                             page_cross_q <= index_sum_y[8];
                             if ((kind_q == KIND_WRITE || index_sum_y[8]) &&
                                 !turbo_skip_indy_dummy)
-                                state_q <= ST_INDEX_DUMMY;
+                                begin state_q <= ST_INDEX_DUMMY; asel_q <= asel_of(ST_INDEX_DUMMY); end
                             else if (kind_q == KIND_WRITE)
-                                state_q <= ST_MEM_WRITE;
+                                begin state_q <= ST_MEM_WRITE; asel_q <= asel_of(ST_MEM_WRITE); end
                             else
-                                state_q <= ST_MEM_READ;
+                                begin state_q <= ST_MEM_READ; asel_q <= asel_of(ST_MEM_READ); end
                         end else begin
                             ea_q <= {data_in, lo_q};
                             if (kind_q == KIND_WRITE)
-                                state_q <= ST_MEM_WRITE;
+                                begin state_q <= ST_MEM_WRITE; asel_q <= asel_of(ST_MEM_WRITE); end
                             else
-                                state_q <= ST_MEM_READ;
+                                begin state_q <= ST_MEM_READ; asel_q <= asel_of(ST_MEM_READ); end
                         end
                     end
 
                     ST_INDEX_DUMMY: begin
                         if (kind_q == KIND_WRITE)
-                            state_q <= ST_MEM_WRITE;
+                            begin state_q <= ST_MEM_WRITE; asel_q <= asel_of(ST_MEM_WRITE); end
                         else if (kind_q == KIND_RMW)
-                            state_q <= ST_RMW_READ;
+                            begin state_q <= ST_RMW_READ; asel_q <= asel_of(ST_RMW_READ); end
                         else
-                            state_q <= ST_MEM_READ;
+                            begin state_q <= ST_MEM_READ; asel_q <= asel_of(ST_MEM_READ); end
                     end
 
                     ST_MEM_READ: begin
@@ -1578,11 +1511,11 @@ module w65c02_core #(
                             else
                                 decimal_result_q <= sbc_result(a_q, data_in, p_q);
                             decimal_so_pending_q <= 1'b0;
-                            state_q <= ST_DECIMAL_EXTRA;
+                            begin state_q <= ST_DECIMAL_EXTRA; asel_q <= asel_of(ST_DECIMAL_EXTRA); end
                         end else begin
                             apply_read_value(data_in);
                             instruction_done <= 1'b1;
-                            state_q <= ST_FETCH;
+                            begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                         end
                     end
 
@@ -1593,52 +1526,52 @@ module w65c02_core #(
                             p_q[P_V] <= 1'b1;
                         decimal_so_pending_q <= 1'b0;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_MEM_WRITE: begin
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_RMW_READ: begin
                         data_q <= data_in;
                         prepare_rmw(data_in);
-                        state_q <= turbo_skip_rmw_dummy ? ST_RMW_WRITE : ST_RMW_MODIFY;
+                        begin state_q <= turbo_skip_rmw_dummy ? ST_RMW_WRITE : ST_RMW_MODIFY; asel_q <= asel_of(turbo_skip_rmw_dummy ? ST_RMW_WRITE : ST_RMW_MODIFY); end
                     end
-                    ST_RMW_MODIFY: state_q <= ST_RMW_WRITE;
+                    ST_RMW_MODIFY: begin state_q <= ST_RMW_WRITE; asel_q <= asel_of(ST_RMW_WRITE); end
                     ST_RMW_WRITE: begin
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_NOP_ABS_DUMMY: begin
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_BRANCH_DUMMY: begin
                         if (page_cross_q)
-                            state_q <= ST_BRANCH_CROSS;
+                            begin state_q <= ST_BRANCH_CROSS; asel_q <= asel_of(ST_BRANCH_CROSS); end
                         else begin
                             pc_q <= target_q;
                             pc_move_q <= PC_MOVE_JUMP;
                             instruction_done <= 1'b1;
-                            state_q <= ST_FETCH;
+                            begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                         end
                     end
                     ST_BRANCH_CROSS: begin
                         pc_q <= target_q;
                         pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_BIT_BRANCH_READ: begin
                         data_q <= data_in;
-                        state_q <= ST_BIT_BRANCH_REPEAT;
+                        begin state_q <= ST_BIT_BRANCH_REPEAT; asel_q <= asel_of(ST_BIT_BRANCH_REPEAT); end
                     end
-                    ST_BIT_BRANCH_REPEAT: state_q <= ST_BIT_BRANCH_OFFSET;
+                    ST_BIT_BRANCH_REPEAT: begin state_q <= ST_BIT_BRANCH_OFFSET; asel_q <= asel_of(ST_BIT_BRANCH_OFFSET); end
                     ST_BIT_BRANCH_OFFSET: begin
                         pc_q <= pc_q + 16'd1;
                         pc_move_q <= PC_MOVE_INC;
@@ -1646,45 +1579,45 @@ module w65c02_core #(
                         page_cross_q <= relative_base[15:8] != relative_target[15:8];
                         if (((op_q == OP_BBR) && !data_q[ir_q[6:4]]) ||
                             ((op_q == OP_BBS) &&  data_q[ir_q[6:4]])) begin
-                            state_q <= ST_BIT_BRANCH_DUMMY;
+                            begin state_q <= ST_BIT_BRANCH_DUMMY; asel_q <= asel_of(ST_BIT_BRANCH_DUMMY); end
                         end else begin
                             instruction_done <= 1'b1;
-                            state_q <= ST_FETCH;
+                            begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                         end
                     end
                     ST_BIT_BRANCH_DUMMY: begin
                         if (page_cross_q)
-                            state_q <= ST_BIT_BRANCH_CROSS;
+                            begin state_q <= ST_BIT_BRANCH_CROSS; asel_q <= asel_of(ST_BIT_BRANCH_CROSS); end
                         else begin
                             pc_q <= target_q;
                             pc_move_q <= PC_MOVE_JUMP;
                             instruction_done <= 1'b1;
-                            state_q <= ST_FETCH;
+                            begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                         end
                     end
                     ST_BIT_BRANCH_CROSS: begin
                         pc_q <= target_q;
                         pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
-                    ST_PUSH_DUMMY: state_q <= ST_PUSH_WRITE;
+                    ST_PUSH_DUMMY: begin state_q <= ST_PUSH_WRITE; asel_q <= asel_of(ST_PUSH_WRITE); end
                     ST_PUSH_WRITE: begin
                         s_q <= s_q - 8'd1;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_PULL_DUMMY_PC: begin
                         if (turbo_instruction) begin
                             s_q <= s_q + 8'd1;
-                            state_q <= ST_PULL_READ;
-                        end else state_q <= ST_PULL_DUMMY_STACK;
+                            begin state_q <= ST_PULL_READ; asel_q <= asel_of(ST_PULL_READ); end
+                        end else begin state_q <= ST_PULL_DUMMY_STACK; asel_q <= asel_of(ST_PULL_DUMMY_STACK); end
                     end
                     ST_PULL_DUMMY_STACK: begin
                         s_q <= s_q + 8'd1;
-                        state_q <= ST_PULL_READ;
+                        begin state_q <= ST_PULL_READ; asel_q <= asel_of(ST_PULL_READ); end
                     end
                     ST_PULL_READ: begin
                         case (op_q)
@@ -1695,7 +1628,7 @@ module w65c02_core #(
                             default: begin end
                         endcase
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_JSR_LOW: begin
@@ -1704,128 +1637,128 @@ module w65c02_core #(
                         pc_move_q <= PC_MOVE_INC;
                         // Keep the operand-high read after both writes: a JSR
                         // executing in stack memory can overwrite that byte.
-                        state_q <= turbo_instruction ? ST_JSR_PUSH_HI : ST_JSR_STACK_DUMMY;
+                        begin state_q <= turbo_instruction ? ST_JSR_PUSH_HI : ST_JSR_STACK_DUMMY; asel_q <= asel_of(turbo_instruction ? ST_JSR_PUSH_HI : ST_JSR_STACK_DUMMY); end
                     end
-                    ST_JSR_STACK_DUMMY: state_q <= ST_JSR_PUSH_HI;
-                    ST_JSR_PUSH_HI: begin s_q <= s_q - 8'd1; state_q <= ST_JSR_PUSH_LO; end
-                    ST_JSR_PUSH_LO: begin s_q <= s_q - 8'd1; state_q <= ST_JSR_HIGH; end
+                    ST_JSR_STACK_DUMMY: begin state_q <= ST_JSR_PUSH_HI; asel_q <= asel_of(ST_JSR_PUSH_HI); end
+                    ST_JSR_PUSH_HI: begin s_q <= s_q - 8'd1; begin state_q <= ST_JSR_PUSH_LO; asel_q <= asel_of(ST_JSR_PUSH_LO); end end
+                    ST_JSR_PUSH_LO: begin s_q <= s_q - 8'd1; begin state_q <= ST_JSR_HIGH; asel_q <= asel_of(ST_JSR_HIGH); end end
                     ST_JSR_HIGH: begin
                         pc_q <= {data_in, lo_q};
                         pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_RTS_DUMMY_PC: begin
                         if (turbo_instruction) begin
                             s_q <= s_q + 8'd1;
-                            state_q <= ST_RTS_PULL_LO;
-                        end else state_q <= ST_RTS_DUMMY_STACK;
+                            begin state_q <= ST_RTS_PULL_LO; asel_q <= asel_of(ST_RTS_PULL_LO); end
+                        end else begin state_q <= ST_RTS_DUMMY_STACK; asel_q <= asel_of(ST_RTS_DUMMY_STACK); end
                     end
-                    ST_RTS_DUMMY_STACK: begin s_q <= s_q + 8'd1; state_q <= ST_RTS_PULL_LO; end
-                    ST_RTS_PULL_LO: begin lo_q <= data_in; s_q <= s_q + 8'd1; state_q <= ST_RTS_PULL_HI; end
+                    ST_RTS_DUMMY_STACK: begin s_q <= s_q + 8'd1; begin state_q <= ST_RTS_PULL_LO; asel_q <= asel_of(ST_RTS_PULL_LO); end end
+                    ST_RTS_PULL_LO: begin lo_q <= data_in; s_q <= s_q + 8'd1; begin state_q <= ST_RTS_PULL_HI; asel_q <= asel_of(ST_RTS_PULL_HI); end end
                     ST_RTS_PULL_HI: begin
                         if (turbo_skip_rts_final) begin
                             pc_q <= {data_in, lo_q} + 16'd1;
                             pc_move_q <= PC_MOVE_JUMP;
                             instruction_done <= 1'b1;
-                            state_q <= ST_FETCH;
+                            begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                         end else begin
                             pc_q <= {data_in, lo_q};
                             pc_move_q <= PC_MOVE_JUMP;
-                            state_q <= ST_RTS_FINAL;
+                            begin state_q <= ST_RTS_FINAL; asel_q <= asel_of(ST_RTS_FINAL); end
                         end
                     end
                     ST_RTS_FINAL: begin
                         pc_q <= pc_q + 16'd1;
                         pc_move_q <= PC_MOVE_INC;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_RTI_DUMMY_PC: begin
                         if (turbo_instruction) begin
                             s_q <= s_q + 8'd1;
-                            state_q <= ST_RTI_PULL_P;
-                        end else state_q <= ST_RTI_DUMMY_STACK;
+                            begin state_q <= ST_RTI_PULL_P; asel_q <= asel_of(ST_RTI_PULL_P); end
+                        end else begin state_q <= ST_RTI_DUMMY_STACK; asel_q <= asel_of(ST_RTI_DUMMY_STACK); end
                     end
-                    ST_RTI_DUMMY_STACK: begin s_q <= s_q + 8'd1; state_q <= ST_RTI_PULL_P; end
-                    ST_RTI_PULL_P: begin p_q <= normalize_p(data_in) & 8'hEF; s_q <= s_q + 8'd1; state_q <= ST_RTI_PULL_LO; end
-                    ST_RTI_PULL_LO: begin lo_q <= data_in; s_q <= s_q + 8'd1; state_q <= ST_RTI_PULL_HI; end
+                    ST_RTI_DUMMY_STACK: begin s_q <= s_q + 8'd1; begin state_q <= ST_RTI_PULL_P; asel_q <= asel_of(ST_RTI_PULL_P); end end
+                    ST_RTI_PULL_P: begin p_q <= normalize_p(data_in) & 8'hEF; s_q <= s_q + 8'd1; begin state_q <= ST_RTI_PULL_LO; asel_q <= asel_of(ST_RTI_PULL_LO); end end
+                    ST_RTI_PULL_LO: begin lo_q <= data_in; s_q <= s_q + 8'd1; begin state_q <= ST_RTI_PULL_HI; asel_q <= asel_of(ST_RTI_PULL_HI); end end
                     ST_RTI_PULL_HI: begin
                         pc_q <= {data_in, lo_q};
                         pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_BRK_SIGNATURE: begin
                         pc_q <= pc_q + 16'd1;
                         pc_move_q <= PC_MOVE_INC;
                         op_q <= OP_BRK;
-                        state_q <= ST_INT_PUSH_HI;
+                        begin state_q <= ST_INT_PUSH_HI; asel_q <= asel_of(ST_INT_PUSH_HI); end
                     end
-                    ST_INT_DUMMY: state_q <= ST_INT_PUSH_HI;
-                    ST_INT_PUSH_HI: begin s_q <= s_q - 8'd1; state_q <= ST_INT_PUSH_LO; end
-                    ST_INT_PUSH_LO: begin s_q <= s_q - 8'd1; state_q <= ST_INT_PUSH_P; end
+                    ST_INT_DUMMY: begin state_q <= ST_INT_PUSH_HI; asel_q <= asel_of(ST_INT_PUSH_HI); end
+                    ST_INT_PUSH_HI: begin s_q <= s_q - 8'd1; begin state_q <= ST_INT_PUSH_LO; asel_q <= asel_of(ST_INT_PUSH_LO); end end
+                    ST_INT_PUSH_LO: begin s_q <= s_q - 8'd1; begin state_q <= ST_INT_PUSH_P; asel_q <= asel_of(ST_INT_PUSH_P); end end
                     ST_INT_PUSH_P: begin
                         s_q <= s_q - 8'd1;
                         p_q[P_I] <= 1'b1;
                         p_q[P_D] <= 1'b0;
-                        state_q <= ST_INT_VECTOR_LO;
+                        begin state_q <= ST_INT_VECTOR_LO; asel_q <= asel_of(ST_INT_VECTOR_LO); end
                     end
-                    ST_INT_VECTOR_LO: begin lo_q <= data_in; state_q <= ST_INT_VECTOR_HI; end
+                    ST_INT_VECTOR_LO: begin lo_q <= data_in; begin state_q <= ST_INT_VECTOR_HI; asel_q <= asel_of(ST_INT_VECTOR_HI); end end
                     ST_INT_VECTOR_HI: begin
                         pc_q <= {data_in, lo_q};
                         pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_JMP_IND_LO: begin
                         lo_q <= data_in;
                         ea_inc_q <= ea_q + 16'd1;
                         ea_incw_q <= {ea_q[15:8], ea_q[7:0] + 8'd1};
-                        state_q <= ST_JMP_IND_HI;
+                        begin state_q <= ST_JMP_IND_HI; asel_q <= asel_of(ST_JMP_IND_HI); end
                     end
-                    ST_JMP_IND_HI: begin hi_q <= data_in; state_q <= ST_JMP_IND_LAST; end
+                    ST_JMP_IND_HI: begin hi_q <= data_in; begin state_q <= ST_JMP_IND_LAST; asel_q <= asel_of(ST_JMP_IND_LAST); end end
                     ST_JMP_IND_LAST: begin
                         pc_q <= {data_in, lo_q};
                         pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
                     ST_JMP_X_DUMMY: begin
                         ea_inc_q <= ea_q + 16'd1;
-                        state_q <= ST_JMP_X_LO;
+                        begin state_q <= ST_JMP_X_LO; asel_q <= asel_of(ST_JMP_X_LO); end
                     end
-                    ST_JMP_X_LO: begin lo_q <= data_in; state_q <= ST_JMP_X_HI; end
+                    ST_JMP_X_LO: begin lo_q <= data_in; begin state_q <= ST_JMP_X_HI; asel_q <= asel_of(ST_JMP_X_HI); end end
                     ST_JMP_X_HI: begin
                         pc_q <= {data_in, lo_q};
                         pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
-                        state_q <= ST_FETCH;
+                        begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                     end
 
-                    ST_WAI_DUMMY: state_q <= ST_WAIT;
+                    ST_WAI_DUMMY: begin state_q <= ST_WAIT; asel_q <= asel_of(ST_WAIT); end
                     ST_WAIT: begin
                         if (nmi_pending_q || nmi_edge || !irq_n) begin
                             if (nmi_pending_q || nmi_edge || !p_q[P_I]) begin
                                 vector_q <= (nmi_pending_q || nmi_edge)
                                           ? 16'hFFFA : 16'hFFFE;
                                 nmi_pending_q <= 1'b0;
-                                state_q <= ST_INT_DUMMY;
+                                begin state_q <= ST_INT_DUMMY; asel_q <= asel_of(ST_INT_DUMMY); end
                             end else begin
-                                state_q <= ST_FETCH;
+                                begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                             end
                         end
                     end
 
-                    ST_STP_DUMMY: state_q <= ST_STOP;
-                    ST_STOP: state_q <= ST_STOP;
+                    ST_STP_DUMMY: begin state_q <= ST_STOP; asel_q <= asel_of(ST_STOP); end
+                    ST_STOP: begin state_q <= ST_STOP; asel_q <= asel_of(ST_STOP); end
 
-                    default: state_q <= ST_RESET_0;
+                    default: begin state_q <= ST_RESET_0; asel_q <= asel_of(ST_RESET_0); end
                 endcase
             end
         end

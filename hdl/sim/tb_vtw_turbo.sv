@@ -224,7 +224,7 @@ module tb_vtw_turbo;
         .d2_native_cycle_active(disk2_native_cycle_active),
         .d2_time_ready(disk2_time_ready),
         .d2_write_timing_active(disk2_write_timing_active),
-        .ramworks_en(ramworks_en), .video_vbl(1'b0),
+        .ramworks_en(ramworks_en), .ramworks_16mb(1'b0), .video_vbl(1'b0),
         .post_main_wide(post_main_wide),
         .video_record_enable(video_record_enable),
         .video_record_valid(video_record_valid),

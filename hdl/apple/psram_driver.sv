@@ -85,6 +85,11 @@ module psram_driver (
     // master is then free to change the inputs.
     logic [7:0]  cmd_q;
     logic [23:0] addr_q;
+    /* addr is a byte address in a 16 MB space, aligned to an 8-byte line.
+     * One line is 4 bytes on chip A and the same 4 bytes on chip B, and
+     * each chip holds 8 MB. The chip address is thus half of the byte
+     * address, so adjacent lines use adjacent 4-byte groups on each chip. */
+    wire [23:0] chip_addr = {1'b0, addr_q[23:1]};
     logic [63:0] wdata_q;
 
     localparam ENTER_QPI    = 8'h35; // CMD_S template
@@ -453,8 +458,8 @@ module psram_driver (
                         sh_clken_tape <= QPIW_CLKEN_TAPE;
                         sh_oe_tape <= QPIW_OE_TAPE;
                         sh_rd_en_tape <= QPIW_RD_EN_TAPE;
-                        sh_wr_a_tape <= {cmd_q, addr_q, wdata_q[31:0]};
-                        sh_wr_b_tape <= {cmd_q, addr_q, wdata_q[63:32]};
+                        sh_wr_a_tape <= {cmd_q, chip_addr, wdata_q[31:0]};
+                        sh_wr_b_tape <= {cmd_q, chip_addr, wdata_q[63:32]};
                     end
                     QPI_READ: begin // QPIR_QUAD template
                         is_quad <= QPIR_QUAD;
@@ -462,8 +467,8 @@ module psram_driver (
                         sh_clken_tape <= QPIR_CLKEN_TAPE;
                         sh_oe_tape <= QPIR_OE_TAPE;
                         sh_rd_en_tape <= QPIR_RD_EN_TAPE;
-                        sh_wr_a_tape <= {cmd_q, addr_q, 32'b0};
-                        sh_wr_b_tape <= {cmd_q, addr_q, 32'b0};
+                        sh_wr_a_tape <= {cmd_q, chip_addr, 32'b0};
+                        sh_wr_b_tape <= {cmd_q, chip_addr, 32'b0};
                     end
                     default: ; // do nothing on other commands
                 endcase

@@ -236,7 +236,7 @@ module tb_vtw_system;
         .d2_resp_valid(1'b0), .d2_resp_rdata(8'd0),
         .d2_cycle_tick(), .d2_native_cycle_active(),
         .d2_time_ready(1'b1), .d2_write_timing_active(1'b0),
-        .ramworks_en(1'b1),
+        .ramworks_en(1'b1), .ramworks_16mb(1'b0),
         .video_vbl(1'b0),
         .post_main_wide(1'b0),
         .overlay_capture_armed(overlay_capture_armed),

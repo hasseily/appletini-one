@@ -637,7 +637,7 @@ def static_checks() -> None:
             '"Ignore $C074 Speed Switch"' in tabs_c and
             '"Disable DiskII Acceleration"' in tabs_c and
             "option_x2, y + (3 * row_h), option_w2" in tabs_c and
-            '"TransWarp on: 128K + 8MB RamWorks, accelerated"' in tabs_c,
+            '"TransWarp on: 128K + RamWorks, accelerated"' in tabs_c,
             "TransWarp tab must show both compatibility checkboxes on one row, "
             "and RAM must surface the accelerated-RamWorks status")
     require("TAB_WITH_OVERRIDES(CONFIG_TAB_TRANSWARP, transwarp, transwarp_overrides)," in help_c,

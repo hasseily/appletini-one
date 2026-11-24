@@ -134,7 +134,7 @@ module tb_vtw_slowdown;
         .d2_native_cycle_active(disk2_native_cycle_active),
         .d2_time_ready(disk2_time_ready),
         .d2_write_timing_active(disk2_write_timing_active),
-        .ramworks_en(1'b0),
+        .ramworks_en(1'b0), .ramworks_16mb(1'b0),
         .video_vbl(1'b0),
         .post_main_wide(1'b0),
         .overlay_capture_armed(1'b0),

@@ -331,16 +331,14 @@ module tb_vtw_copy_engine;
         invalid('h1004, 'h1000, 16, 1'b0);
         label = "same source and destination";
         invalid('h20200, 'h20200, 16, 1'b0);
-        label = "source out of range";
-        invalid('h800000, 'h11000, 16, 1'b0);
-        label = "destination out of range";
-        invalid('h1000, 'h800000, 16, 1'b0);
+        // Each 24-bit address is in the 16 MB PSRAM range; only the end
+        // of a transfer can be out of range.
         label = "source end overflow";
-        invalid('h7FFFF8, 'h11000, 16, 1'b0);
+        invalid('hFFFFF8, 'h11000, 16, 1'b0);
         label = "destination end overflow";
-        invalid('h1000, 'h7FFFF8, 16, 1'b0);
+        invalid('h1000, 'hFFFFF8, 16, 1'b0);
         label = "fill end overflow";
-        invalid(0, 'h7FFFF8, 16, 1'b1);
+        invalid(0, 'hFFFFF8, 16, 1'b1);
         label = "missing permit at start";
         fixture();
         permit = 1'b0;

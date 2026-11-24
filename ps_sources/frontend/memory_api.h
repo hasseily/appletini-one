@@ -11,6 +11,8 @@
 #define MEMORY_API_DESCRIPTOR_SIZE   16U
 #define MEMORY_API_MAX_DESCRIPTORS   16U
 #define MEMORY_API_MAX_AUX_BANK      126U
+/* With RamWorks 16MB: logical banks 127..254 are also storage. */
+#define MEMORY_API_MAX_AUX_BANK_16MB 254U
 #define MEMORY_API_MIN_ADDR          0x0200U
 #define MEMORY_API_LIMIT_ADDR        0xC000U
 #define MEMORY_API_DMA_CHUNK         512U

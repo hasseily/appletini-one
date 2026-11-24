@@ -252,6 +252,8 @@ static void test_direct_fill_and_large_copy(void) {
     assert(result[23]==1 && progress(result)==0xbe00);
     puts("PASS direct fill alignments and full $0200-$BFFF descriptor");
 }
+uint8_t appletini_config_ramworks_16mb(void) { return 0U; }
+
 int main(void) {
     uint8_t payload[24], result[32], expected[1600];
     unsigned srcspace,dstspace,so,doff,i,direct;

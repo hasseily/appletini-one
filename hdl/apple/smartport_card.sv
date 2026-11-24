@@ -98,7 +98,7 @@ module smartport_card (
     input  logic [10:0]              vtw_addr,
     input  logic                     vtw_rw,       // 1 = read, 0 = write
     input  logic [7:0]               vtw_wdata,
-    input  logic [21:0]              vtw_sss_snapshot,
+    input  logic [22:0]              vtw_sss_snapshot,
     output logic                     vtw_ready,     // combinational accept
     output logic                     vtw_resp_valid,// 1-clk read-data pulse
     output logic [7:0]               vtw_resp_rdata
@@ -152,8 +152,8 @@ module smartport_card (
                             // ($01 = ProDOS, $02 = SmartPort family)
 
     // ---- Soft-switch snapshot ----
-    logic [21:0] sss_snapshot_q;
-    wire [21:0] sss_snapshot_d = {
+    logic [22:0] sss_snapshot_q;
+    wire [22:0] sss_snapshot_d = {
         1'b0,
         sss.sw_ramworks_bank,
         sss.sw_lcram_write,
@@ -458,7 +458,7 @@ module smartport_card (
             exec_vtw_q      <= 1'b0;
             ctrl_val_q      <= 8'd0;
             dry_pop_count_q <= 16'd0;
-            sss_snapshot_q  <= 22'd0;
+            sss_snapshot_q  <= 23'd0;
             smartport_irq   <= 1'b0;
             vtw_busy_q      <= 1'b0;
             vtw_resp_valid  <= 1'b0;
@@ -622,7 +622,7 @@ module smartport_card (
                 SP_REG_IN_HEAD: as_client.rdata =
                     {23'h0, !in_empty, in_head};
                 SP_REG_IN_HEAD4: as_client.rdata = in_word_q;
-                SP_REG_SSS: as_client.rdata = {10'h0, sss_snapshot_q};
+                SP_REG_SSS: as_client.rdata = {9'h0, sss_snapshot_q};
                 default: as_client.rdata = overlay_ps_read_addr
                     ? overlay_ps_rdata : 32'h00000000;
             endcase

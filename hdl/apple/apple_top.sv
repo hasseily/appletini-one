@@ -139,7 +139,8 @@ module apple_top(
         logic [7:0] reply_slot;
     } iigs_bus_permissions_t;
     iigs_bus_permissions_t iigs_bus_permissions;
-    logic ramworks_en_q;  // RamWorks 8 MB expansion, card-control register 0x62
+    logic ramworks_en_q;  // RamWorks expansion, card-control register 0x62 bit 0
+    logic ramworks_16mb_q; // 16 MB (255 banks) in place of 8 MB, register 0x62 bit 1
 
     wire       onee_usb_keyboard_event_valid;
     wire [6:0] onee_usb_keyboard_event_code;
@@ -401,6 +402,7 @@ module apple_top(
         .clk(clk),
         .rstn(rstn[1]),
         .ramworks_en(ramworks_en_q),
+        .ramworks_16mb(ramworks_16mb_q),
         .iigs_profile(iigs_ownership_active),
         .iigs_bootstrap_slot7(iigs_legacy_bootstrap_slot7),
         .iigs_boot_mask(boot_menu_iigs_external_slot_mask),
@@ -999,7 +1001,7 @@ module apple_top(
     logic [7:0] disk2_sound_seek_start_qtrack;
     logic [7:0] disk2_sound_seek_distance;
     logic [3:0] disk2_menu_sound_event_q;
-    wire [20:0] current_softswitch_state = {
+    wire [21:0] current_softswitch_state = {
         sss.sw_ramworks_bank,
         sss.sw_lcram_write,
         sss.sw_lcram_read,
@@ -2009,7 +2011,7 @@ module apple_top(
     logic        vtw_sp_req_ready;
     logic        vtw_sp_resp_valid;
     logic [7:0]  vtw_sp_resp_rdata;
-    logic [21:0] vtw_sp_sss_snapshot;
+    logic [22:0] vtw_sp_sss_snapshot;
 
     globals::AppleBus_read smartport_ab_read;
     always_comb begin
@@ -2516,6 +2518,7 @@ module apple_top(
         .d2_time_ready(vtw_d2_time_ready),
         .d2_write_timing_active(vtw_d2_write_timing_active),
         .ramworks_en(ramworks_en_q),
+        .ramworks_16mb(ramworks_16mb_q),
         .video_vbl(vtw_video_vbl),
         .post_main_wide(post_main_wide_q),
         .video_record_valid(vtw_video_record_valid),
@@ -2836,6 +2839,7 @@ module apple_top(
             aux_provide_en_q                <= 1'b0;
             psram_dcount_q                  <= 5'd0;
             ramworks_en_q                   <= 1'b0;
+            ramworks_16mb_q                 <= 1'b0;
             post_main_wide_q                <= 1'b0;
             psram_dcount_edge_q             <= 1'b0;
             psram_dcount_wr_pulse_q         <= 1'b0;
@@ -3098,7 +3102,10 @@ module apple_top(
                     /* (aux_provide is also force-dropped by the boot
                      * ROM's aux probe -- see bm_aux_probe_pulse term
                      * below this case block.) */
-                    8'h62: ramworks_en_q <= as_common.wdata[0];
+                    8'h62: begin
+                        ramworks_en_q   <= as_common.wdata[0];
+                        ramworks_16mb_q <= as_common.wdata[1];
+                    end
                     8'h63: begin
                         psram_dcount_q          <= as_common.wdata[4:0];
                         psram_dcount_edge_q     <= as_common.wdata[5];
@@ -3179,7 +3186,7 @@ module apple_top(
             case (as_common.araddr)
                 CARD_CTRL_REG_SLOT_ENABLE_MASK:   as_client_rdata_q <= card_slot_enable_mask_q;
                 CARD_CTRL_REG_FEATURE_ENABLE_MASK: as_client_rdata_q <= card_feature_enable_mask_q;
-                CARD_CTRL_REG_SOFTSW_STATE:        as_client_rdata_q <= {11'h000, current_softswitch_state};
+                CARD_CTRL_REG_SOFTSW_STATE:        as_client_rdata_q <= {10'h000, current_softswitch_state};
                 CARD_CTRL_REG_NSC_TIME_LO:         as_client_rdata_q <= nsc_time_bcd_q[31:0];
                 CARD_CTRL_REG_NSC_TIME_HI:         as_client_rdata_q <= nsc_time_bcd_q[63:32];
                 CARD_CTRL_REG_NSC_WRITE_SEQ:       as_client_rdata_q <= nsc_write_seq_q;
@@ -3308,7 +3315,7 @@ module apple_top(
                                                machine_m2sel_active_high_safe,
                                                machine_mode_effective};
                 8'h61:   as_client_rdata_q <= {31'b0, aux_provide_en_q};
-                8'h62:   as_client_rdata_q <= {31'b0, ramworks_en_q};
+                8'h62:   as_client_rdata_q <= {30'b0, ramworks_16mb_q, ramworks_en_q};
                 8'h63:   as_client_rdata_q <= {26'b0,
                                                psram_dcount_edge_q,
                                                psram_dcount_q};

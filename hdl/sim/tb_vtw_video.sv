@@ -98,7 +98,7 @@ module tb_vtw_video;
     logic [31:0] cnt_core_cycles;
     logic [31:0] cnt_posted_writes;
     logic [15:0] dbg_core_pc;
-    logic [21:0] sp_sss_snapshot;
+    logic [22:0] sp_sss_snapshot;
     logic [7:0]  rb;
 
     vtw_core_top dut (
@@ -124,7 +124,7 @@ module tb_vtw_video;
         .d2_resp_valid(1'b0), .d2_resp_rdata(8'd0),
         .d2_cycle_tick(), .d2_native_cycle_active(),
         .d2_time_ready(1'b1), .d2_write_timing_active(1'b0),
-        .ramworks_en(1'b0),
+        .ramworks_en(1'b0), .ramworks_16mb(1'b0),
         .video_vbl(video_vbl),
         .post_main_wide(1'b0),
         .overlay_capture_armed(1'b0),
@@ -343,7 +343,7 @@ module tb_vtw_video;
         check(posts_main_paged > WINDOW / 4,
               $sformatf("aux $9DF8=1 immediately widens main (%0d)",
                         posts_main_paged));
-        check(sp_sss_snapshot[21],
+        check(sp_sss_snapshot[22],
               "SmartPort snapshot includes private wide-main state");
 
         // ---- 1e. AUX $9DF8=0 must narrow MAIN again ----
@@ -352,7 +352,7 @@ module tb_vtw_video;
         check(posts_main_cleared < WINDOW / 20,
               $sformatf("aux $9DF8=0 narrows main again (%0d)",
                         posts_main_cleared));
-        check(!sp_sss_snapshot[21],
+        check(!sp_sss_snapshot[22],
               "SmartPort snapshot clears private wide-main state");
 
         // ---- 2. Status read: RAMRD on -> RDRAMRD ($C013) bit7 = 1 ----

@@ -39,6 +39,9 @@ module w65c02_core #(
     // Classic guest cycles represented by this step, including skipped RAM
     // reads. Sample only when enable && ready accepts the current bus cycle.
     output logic [3:0]  cycle_ticks,
+    // This cycle is a read of the byte at PC (debug_pc). A wrapper can use
+    // it to accept a byte that it fetched ahead from that address.
+    output logic        addr_is_pc,
 
     input  logic        debug_load,
     input  logic [15:0] debug_pc_in,
@@ -899,9 +902,68 @@ module w65c02_core #(
     decode_t fetch_decode;
     assign fetch_decode = decode_opcode(data_in);
 
+    /* Fetch decisions, one-hot, straight from the opcode byte. The table is
+     * a constant made from decode_opcode(), so the two cannot disagree. As
+     * a ROM of 256 entries each bit is one 8-input function of data_in; the
+     * operation number is not made and then decoded again on this path. */
+    localparam int FC_ONE     = 0;   // one-cycle NOP
+    localparam int FC_BRK     = 1;
+    localparam int FC_JSR     = 2;
+    localparam int FC_RTS     = 3;
+    localparam int FC_RTI     = 4;
+    localparam int FC_PUSH    = 5;
+    localparam int FC_PULL    = 6;
+    localparam int FC_WAI     = 7;
+    localparam int FC_STP     = 8;
+    localparam int FC_IMPLIED = 9;   // implied or accumulator
+    localparam int FC_OPERAND = 10;  // every opcode with an operand byte
+    localparam int FC_BITS    = 11;
+    localparam int FETCH_BITS = FC_BITS + 3;  // class bits, then kind_t
+
+    function automatic logic [FETCH_BITS-1:0] fetch_entry(input logic [7:0] opcode);
+        decode_t d;
+        logic [FC_BITS-1:0] cls;
+        begin
+            d = decode_opcode(opcode);
+            cls = '0;
+            if (d.one_cycle) cls[FC_ONE] = 1'b1;
+            else begin
+                case (d.op)
+                    OP_BRK: cls[FC_BRK] = 1'b1;
+                    OP_JSR: cls[FC_JSR] = 1'b1;
+                    OP_RTS: cls[FC_RTS] = 1'b1;
+                    OP_RTI: cls[FC_RTI] = 1'b1;
+                    OP_PHP, OP_PHA, OP_PHX, OP_PHY: cls[FC_PUSH] = 1'b1;
+                    OP_PLP, OP_PLA, OP_PLX, OP_PLY: cls[FC_PULL] = 1'b1;
+                    OP_WAI: cls[FC_WAI] = 1'b1;
+                    OP_STP: cls[FC_STP] = 1'b1;
+                    default: begin
+                        if (d.mode == AM_IMP || d.mode == AM_ACC)
+                            cls[FC_IMPLIED] = 1'b1;
+                        else
+                            cls[FC_OPERAND] = 1'b1;
+                    end
+                endcase
+            end
+            fetch_entry = {kind_for_op(d.op), cls};
+        end
+    endfunction
+
+    function automatic logic [256*FETCH_BITS-1:0] fetch_table();
+        begin
+            for (int i = 0; i < 256; i++)
+                fetch_table[FETCH_BITS*i +: FETCH_BITS] = fetch_entry(8'(i));
+        end
+    endfunction
+
+    localparam logic [256*FETCH_BITS-1:0] FETCH_TABLE = fetch_table();
+    wire [FETCH_BITS-1:0] fetch_ctl = FETCH_TABLE[FETCH_BITS*data_in +: FETCH_BITS];
+    wire [FC_BITS-1:0]    fetch_cls = fetch_ctl[FC_BITS-1:0];
+    wire kind_t           fetch_kind = kind_t'(fetch_ctl[FETCH_BITS-1:FC_BITS]);
+
     wire fetch_interrupt = nmi_pending_q || nmi_edge || (!irq_n && !p_q[P_I]);
     wire turbo_fetch_skip_pc = turbo_requested && !fetch_interrupt &&
-                               !fetch_decode.one_cycle &&
+                               !fetch_cls[FC_ONE] &&
                                relative_base[15:12] != 4'hC;
     wire abs_index_cross = (mode_q == AM_ABSX) ? index_sum_x[8] : index_sum_y[8];
     wire abs_index_dummy = kind_q == KIND_WRITE ||
@@ -925,16 +987,10 @@ module w65c02_core #(
         case (state_q)
             ST_FETCH: begin
                 if (turbo_fetch_skip_pc) begin
-                    case (fetch_decode.op)
-                        OP_PHP, OP_PHA, OP_PHX, OP_PHY: cycle_ticks = 4'd2;
-                        OP_PLP, OP_PLA, OP_PLX, OP_PLY, OP_RTS, OP_RTI:
-                            cycle_ticks = 4'd3;
-                        OP_BRK, OP_JSR, OP_WAI, OP_STP: begin end
-                        default: begin
-                            if (fetch_decode.mode == AM_IMP || fetch_decode.mode == AM_ACC)
-                                cycle_ticks = 4'd2;
-                        end
-                    endcase
+                    if (fetch_cls[FC_PULL] || fetch_cls[FC_RTS] || fetch_cls[FC_RTI])
+                        cycle_ticks = 4'd3;
+                    else if (fetch_cls[FC_PUSH] || fetch_cls[FC_IMPLIED])
+                        cycle_ticks = 4'd2;
                 end
             end
             ST_OPERAND: begin
@@ -968,6 +1024,9 @@ module w65c02_core #(
             default: begin end
         endcase
     end
+
+    assign addr_is_pc = (state_q == ST_FETCH) || (state_q == ST_OPERAND) ||
+                        (state_q == ST_ABS_HI) || (state_q == ST_JSR_LOW);
 
     assign debug_pc = pc_q;
     assign debug_s  = s_q;
@@ -1251,7 +1310,7 @@ module w65c02_core #(
                         ir_q <= data_in;
                         op_q <= fetch_decode.op;
                         mode_q <= fetch_decode.mode;
-                        kind_q <= kind_for_op(fetch_decode.op);
+                        kind_q <= fetch_kind;
 
                         if (fetch_interrupt) begin
                             op_q <= OP_NOP;
@@ -1262,57 +1321,52 @@ module w65c02_core #(
                         end else begin
                             pc_q <= pc_q + 16'd1;
 
-                            if (fetch_decode.one_cycle) begin
-                                instruction_done <= 1'b1;
-                                state_q <= ST_FETCH;
-                            end else begin
-                                case (fetch_decode.op)
-                                    OP_BRK: begin
-                                        vector_q <= 16'hFFFE;
-                                        state_q <= ST_BRK_SIGNATURE;
+                            // The class bits are one-hot (see fetch_entry).
+                            unique case (1'b1)
+                                fetch_cls[FC_ONE]: begin
+                                    instruction_done <= 1'b1;
+                                    state_q <= ST_FETCH;
+                                end
+                                fetch_cls[FC_BRK]: begin
+                                    vector_q <= 16'hFFFE;
+                                    state_q <= ST_BRK_SIGNATURE;
+                                end
+                                fetch_cls[FC_JSR]: state_q <= ST_JSR_LOW;
+                                fetch_cls[FC_RTS]: begin
+                                    if (turbo_fetch_skip_pc) begin
+                                        s_q <= s_q + 8'd1;
+                                        state_q <= ST_RTS_PULL_LO;
+                                    end else state_q <= ST_RTS_DUMMY_PC;
+                                end
+                                fetch_cls[FC_RTI]: begin
+                                    if (turbo_fetch_skip_pc) begin
+                                        s_q <= s_q + 8'd1;
+                                        state_q <= ST_RTI_PULL_P;
+                                    end else state_q <= ST_RTI_DUMMY_PC;
+                                end
+                                fetch_cls[FC_PUSH]:
+                                    state_q <= turbo_fetch_skip_pc ? ST_PUSH_WRITE : ST_PUSH_DUMMY;
+                                fetch_cls[FC_PULL]: begin
+                                    if (turbo_fetch_skip_pc) begin
+                                        s_q <= s_q + 8'd1;
+                                        state_q <= ST_PULL_READ;
+                                    end else state_q <= ST_PULL_DUMMY_PC;
+                                end
+                                fetch_cls[FC_WAI]: state_q <= ST_WAI_DUMMY;
+                                fetch_cls[FC_STP]: state_q <= ST_STP_DUMMY;
+                                fetch_cls[FC_IMPLIED]: begin
+                                    // The discarded implied read uses PC+1. Keep it
+                                    // if that address can change Apple I/O.
+                                    if (turbo_fetch_skip_pc) begin
+                                        apply_implied(fetch_decode.op);
+                                        instruction_done <= 1'b1;
+                                        state_q <= ST_FETCH;
+                                    end else begin
+                                        state_q <= ST_IMPLIED;
                                     end
-                                    OP_JSR: state_q <= ST_JSR_LOW;
-                                    OP_RTS: begin
-                                        if (turbo_fetch_skip_pc) begin
-                                            s_q <= s_q + 8'd1;
-                                            state_q <= ST_RTS_PULL_LO;
-                                        end else state_q <= ST_RTS_DUMMY_PC;
-                                    end
-                                    OP_RTI: begin
-                                        if (turbo_fetch_skip_pc) begin
-                                            s_q <= s_q + 8'd1;
-                                            state_q <= ST_RTI_PULL_P;
-                                        end else state_q <= ST_RTI_DUMMY_PC;
-                                    end
-                                    OP_PHP, OP_PHA, OP_PHX, OP_PHY:
-                                        state_q <= turbo_fetch_skip_pc ? ST_PUSH_WRITE : ST_PUSH_DUMMY;
-                                    OP_PLP, OP_PLA, OP_PLX, OP_PLY: begin
-                                        if (turbo_fetch_skip_pc) begin
-                                            s_q <= s_q + 8'd1;
-                                            state_q <= ST_PULL_READ;
-                                        end else state_q <= ST_PULL_DUMMY_PC;
-                                    end
-                                    OP_WAI: state_q <= ST_WAI_DUMMY;
-                                    OP_STP: state_q <= ST_STP_DUMMY;
-                                    default: begin
-                                        case (fetch_decode.mode)
-                                            AM_IMP, AM_ACC: begin
-                                                // The discarded implied read
-                                                // uses PC+1. Keep it if that
-                                                // address can change Apple I/O.
-                                                if (turbo_fetch_skip_pc) begin
-                                                    apply_implied(fetch_decode.op);
-                                                    instruction_done <= 1'b1;
-                                                    state_q <= ST_FETCH;
-                                                end else begin
-                                                    state_q <= ST_IMPLIED;
-                                                end
-                                            end
-                                            default: state_q <= ST_OPERAND;
-                                        endcase
-                                    end
-                                endcase
-                            end
+                                end
+                                default: state_q <= ST_OPERAND;
+                            endcase
                         end
                     end
 

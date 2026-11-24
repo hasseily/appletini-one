@@ -21,6 +21,12 @@ module vtw_turbo_cache #(
     output logic [7:0]  rdata,
     output logic [17:0] write_phys,
 
+    // Second read port of the word cache, for the code prefetch.
+    input  logic [15:0] addr2,
+    output logic        read2_valid,
+    output logic [15-BYTE_INDEX_BITS:0] read2_tag,
+    output logic [7:0]  rdata2,
+
     input  logic        map_fill,
     input  logic [15:0] map_addr,
     input  logic        map_rw,
@@ -47,6 +53,7 @@ module vtw_turbo_cache #(
     (* ram_style = "distributed" *) logic [18:0] map_mem [0:MAP_COUNT-1];
     (* ram_style = "distributed" *) logic [TAG_BITS+9:0] word_tag_mem [0:WORD_COUNT-1];
     wire [31:0] read_word;
+    wire [31:0] read2_word;
     logic [MAP_COUNT-1:0] map_valid_q;
     logic [WORD_COUNT-1:0] word_valid_q;
 
@@ -80,6 +87,12 @@ module vtw_turbo_cache #(
     assign rdata = read_word[8*addr[1:0] +: 8];
     assign write_phys = {map_entry[9:0], addr[7:0]};
 
+    wire [WORD_INDEX_BITS-1:0] word2_index = word_set(addr2);
+    wire [TAG_BITS+9:0] word2_tag = word_tag_mem[word2_index];
+    assign read2_valid = word_valid_q[word2_index];
+    assign read2_tag = word2_tag[TAG_BITS+9:10];
+    assign rdata2 = read2_word[8*addr2[1:0] +: 8];
+
     wire [MAP_INDEX_BITS:0] fill_map_index = {map_rw, page_set(map_addr[15:8])};
     wire [WORD_INDEX_BITS-1:0] snoop_index = word_set(snoop_addr);
     wire [WORD_INDEX_BITS-1:0] fill_index = word_set(byte_addr);
@@ -111,6 +124,7 @@ module vtw_turbo_cache #(
             (data_fill || (snoop_write && snoop_hit && snoop_addr[1:0] == 2'(lane)));
         wire [7:0] lane_wdata = snoop_write ? snoop_data : word_data[8*lane +: 8];
         assign read_word[8*lane +: 8] = byte_mem[word_index];
+        assign read2_word[8*lane +: 8] = byte_mem[word2_index];
         always_ff @(posedge clk) begin
             if (lane_write)
                 byte_mem[data_write_index] <= lane_wdata;

@@ -263,16 +263,16 @@ def test_vtw_direct_read_is_complete_and_fail_closed() -> None:
     require("apple_addr < 0x0200U" in build and
             "(uint32_t)apple_addr + SP_VTW_DIRECT_BYTES > 0x10000UL" in build,
             "direct preflight must reject zero-page/stack and wrapping buffers")
-    require("if (bank > 127U)" in source and
+    require("if (bank > 255U)" in source and
             "if (spans[i].bank > 1U)" in direct and
             "sp_vtw_direct_ramworks_block(" in direct,
-            "direct mapping must route RamWorks banks 2..127 to the bulk path")
+            "direct mapping must route RamWorks banks 2..255 to the bulk path")
     require(direct.count("sp_vtw_is_live()") >= 2,
             "direct copy must prove vTW live before and after the shadow write")
     require("CARD_CTRL_VTW_SHADOW_ADDR_REG) & 0x3FFFFUL" in shadow and
             "span->phys + (uint32_t)span->length" in shadow,
             "direct copy must verify that the shadow port accepted all bytes")
-    require("#define SP_SSS_VTW_WIDE_BIT     (1UL << 21)" in source and
+    require("#define SP_SSS_VTW_WIDE_BIT     (1UL << 22)" in source and
             "const uint8_t aux" in source and "const uint8_t wide" in source and
             "(aux != 0U || wide != 0U)" in source,
             "SmartPort must use the command's exact bank and wide-main state")
@@ -325,7 +325,7 @@ def test_vtw_direct_read_is_complete_and_fail_closed() -> None:
             "CARD_CTRL_VTW_SHADOW_DATA4_ACCEPT_MASK" in shadow,
             "packed shadow writes must use a two-word queue with a final "
             "accepted-count proof")
-    require("output logic [21:0]             sp_sss_snapshot" in vtw_core and
+    require("output logic [22:0]             sp_sss_snapshot" in vtw_core and
             ".vtw_sss_snapshot(vtw_sp_sss_snapshot)" in apple_top and
             "sss_snapshot_q <= vtw_ctrl_write" in read(SMARTPORT_SV),
             "vTW SmartPort commands must latch the core's private switch state")

@@ -106,11 +106,14 @@ module vtw_core_top (
 
     /* RamWorks 8 MB expansion (card-control register 0x62, i.e. the same
      * config bit that arms the motherboard-side PSRAM aux serving). When
-     * set, the private translator emits banks 2..128 and the vTW serves
+     * set, the private translator emits banks 2..128 (2..255 with
+     * ramworks_16mb) and the vTW serves
      * them from PSRAM at core speed through the line port below. When
      * clear, $C071/$C073 writes are ignored (stock 64K-aux //e semantics:
      * RamWorks probes see aliasing and size the machine correctly). */
     input  logic                    ramworks_en,
+    /* With ramworks_en: also accept bank values 128..254 (16 MB). */
+    input  logic                    ramworks_16mb,
 
     /* Vertical-blank level from the video timing generator (same fabric
      * clock as this core -- no CDC). Feeds the synthesized $C019 RDVBLBAR
@@ -213,7 +216,7 @@ module vtw_core_top (
     input  logic [7:0]              sp_resp_rdata,
     /* Exact private state for the SmartPort command snapshot. Bit 21 is
      * the effective wide-main video flag; bits 20:0 match SP_REG_SSS. */
-    output logic [21:0]             sp_sss_snapshot,
+    output logic [22:0]             sp_sss_snapshot,
 
     // ARM shadow access (port B), AxiSimple-mapped in apple_top.
     input  logic                    sh_en,
@@ -328,6 +331,21 @@ module vtw_core_top (
     (* DONT_TOUCH = "TRUE" *) logic [7:0] turbo_rdata_q;
     wire [7:0]   core_data_in;
     logic [17:0] turbo_write_phys_q;
+    /* TURBO code prefetch. In the clock that completes a cached read, the
+     * second cache port reads the byte at the address that PC will most
+     * probably have next. If the core then asks for exactly that byte, the
+     * cycle completes in one fabric clock, without the lookup clock. The
+     * entry lives for one clock only. After a cached write it is used only
+     * if the write was to a different byte. */
+    wire         core_addr_is_pc;
+    logic        cycle_is_pc_q;
+    logic        pf_valid_q;
+    logic [15:0] pf_addr_q;
+    (* DONT_TOUCH = "TRUE" *) logic [7:0] pf_rdata_q;
+    logic [8:0]  pf_tag_q;
+    logic        pf_read_valid_q;
+    wire         pf_complete;
+    wire         pf_accept;
 
     /* Motherboard RES# resets the core through the shadow's reset vector;
      * /DMA stays held (vtw_bus_engine). CTRL-RESET with the vTW disabled
@@ -365,6 +383,7 @@ module vtw_core_top (
         .ready(1'b1),
         .turbo(turbo_execute),
         .cycle_ticks(core_cycle_ticks),
+        .addr_is_pc(core_addr_is_pc),
         .irq_n(core_irq_n),
         .nmi_n(ab_read.nmi),
         .so_n(1'b1),
@@ -433,6 +452,7 @@ module vtw_core_top (
         .clk(clk),
         .rstn(rstn),
         .ramworks_en(ramworks_en),
+        .ramworks_16mb(ramworks_16mb),
         .ab_read(core_ab),
         .sss(vsss)
     );
@@ -449,6 +469,7 @@ module vtw_core_top (
         .iigs_boot_mask_valid(1'b0),
         .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
         .clk(clk), .rstn(rstn), .ramworks_en(ramworks_en),
+        .ramworks_16mb(ramworks_16mb),
         .ab_read(ab_read), .sss(video_physical_sss)
     );
 
@@ -647,7 +668,7 @@ module vtw_core_top (
         .low_bits   (7'b0000000),
         .status_byte(status_byte)
     );
-    /* RamWorks banks 2..128: CACHE-routed decodes with no shadow backing
+    /* RamWorks banks 2..255: CACHE-routed decodes with no shadow backing
      * exist only when the private translator's RamWorks banking is armed.
      * Served from PSRAM through the line cache below. */
     wire xl_is_ramworks = (xl_route == APPLE_ROUTE_CACHE) &&
@@ -1022,7 +1043,9 @@ module vtw_core_top (
     } xstate_t;
     // Decode cache completion and response selection with one state bit.
     (* fsm_encoding = "one_hot" *) xstate_t xstate_q;
-    assign core_data_in = (xstate_q == X_TURBO_DONE) ? turbo_rdata_q : core_data_in_q;
+    // In X_CAPTURE the only possible completion is a prefetched byte.
+    assign core_data_in = (xstate_q == X_TURBO_DONE) ? turbo_rdata_q :
+                          (xstate_q == X_CAPTURE)    ? pf_rdata_q : core_data_in_q;
 
     // TURBO separates lookup and execute. Its dedicated response register
     // keeps the cache lookup out of the shared normal-response input mux.
@@ -1227,6 +1250,14 @@ module vtw_core_top (
     // aux $9D page includes the private SHR paging control at $9DF8.
     wire turbo_map_fast_write = !xl_is_posted &&
                                !(xl_is_aux && cycle_addr_q[15:8] == 8'h9D);
+    /* A code byte moves PC one byte on; a data cycle leaves PC as it is.
+     * A prefetched completion is always a code byte. A wrong guess (branch,
+     * jump, interrupt) fails the address compare in pf_complete. */
+    wire [15:0] pf_lookup_addr = dbg_core_pc +
+        {15'd0, (xstate_q == X_CAPTURE) || cycle_is_pc_q};
+    wire        pf_read_valid;
+    wire [8:0]  pf_read_tag;
+    wire [7:0]  pf_rdata;
     vtw_turbo_cache #(.BYTE_INDEX_BITS(TURBO_BYTE_INDEX_BITS)) turbo_cache_i (
         .clk(clk), .rstn(rstn), .invalidate(turbo_invalidate),
         .addr(core_addr), .rw(core_rwb),
@@ -1234,6 +1265,8 @@ module vtw_core_top (
         .write_valid(turbo_write_valid), .write_tag(turbo_write_tag),
         .write_fast(turbo_write_fast),
         .rdata(turbo_rdata), .write_phys(turbo_write_phys),
+        .addr2(pf_lookup_addr), .read2_valid(pf_read_valid),
+        .read2_tag(pf_read_tag), .rdata2(pf_rdata),
         .map_fill(turbo_map_fill), .map_addr(cycle_addr_q),
         .map_rw(cycle_rw_q), .map_phys(xl_shadow_phys),
         .map_fast_write(turbo_map_fast_write),
@@ -1533,11 +1566,27 @@ module vtw_core_top (
                             status_vbl_sampled_q);
     wire complete_dead   = (xstate_q == X_DEAD)        && pace_ok;
 
+    /* The prefetched byte is good when its cache entry was valid, its tag
+     * matches, and the core now reads the byte at that same address. A
+     * $Cxxx address never uses it. The video barrier is checked without its
+     * $Cxxx term, which cannot apply here. */
+    wire pf_tag_hit = pf_read_valid_q &&
+                      pf_tag_q == pf_addr_q[15:TURBO_BYTE_INDEX_BITS] &&
+                      pf_addr_q[15:12] != 4'hC;
+    assign pf_complete = (xstate_q == X_CAPTURE) && pf_valid_q && pf_tag_hit &&
+                         core_addr_is_pc && (dbg_core_pc == pf_addr_q) &&
+                         turbo_execute && pace_ok && core_active &&
+                         !turbo_invalidate && !arm_rw_flush_req &&
+                         !video_sync_active && !video_full_flush;
+    assign pf_accept = pf_complete && core_res_n && !pause && !rw_hold_q &&
+                       d2_time_ready;
+
     assign core_en = core_res_n && !pause && !rw_hold_q &&
                      d2_time_ready &&
                      (complete_mem || complete_bus ||
                       complete_rw || complete_sp ||
-                      complete_status || complete_dead || turbo_complete);
+                      complete_status || complete_dead || turbo_complete ||
+                      pf_complete);
     assign arm_rw_hold_state = rw_hold_q;
 
     // C070 completes privately at native cadence. Its aliases keep their
@@ -1647,7 +1696,8 @@ module vtw_core_top (
                 core_active && !d2_time_ready,
                 core_active && turbo_invalidate && !perf_invalidate_q,
                 core_active && xstate_q == X_TURBO_DONE && !turbo_hit && !turbo_invalidate,
-                core_en && xstate_q == X_TURBO_DONE && cycle_rw_q,
+                core_en && ((xstate_q == X_TURBO_DONE && cycle_rw_q) ||
+                            xstate_q == X_CAPTURE),
                 core_en,
                 core_en,
                 core_active
@@ -1682,6 +1732,12 @@ module vtw_core_top (
             turbo_write_valid_q <= 1'b0;
             turbo_write_fast_q  <= 1'b0;
             turbo_write_phys_q  <= '0;
+            cycle_is_pc_q       <= 1'b0;
+            pf_valid_q          <= 1'b0;
+            pf_addr_q           <= '0;
+            pf_rdata_q          <= 8'hFF;
+            pf_tag_q            <= '0;
+            pf_read_valid_q     <= 1'b0;
             cycle_addr_q        <= '0;
             cycle_wdata_q       <= '0;
             cycle_rw_q          <= 1'b1;
@@ -1900,7 +1956,7 @@ module vtw_core_top (
             // counter is current before the next cycle can complete.
             slow_update_valid_q <= core_en;
             if (core_en) begin
-                slow_update_hit_q      <= !turbo_complete && sd_hit;
+                slow_update_hit_q      <= !turbo_complete && !pf_complete && sd_hit;
                 slow_update_duration_q <= slow_duration;
             end
             if (slow_update_valid_q && slow_update_hit_q) begin
@@ -1914,14 +1970,37 @@ module vtw_core_top (
                 slow_update_valid_q <= 1'b0;
             end
 
+            // Prefetch: look up every clock; the entry is valid only in
+            // the clock after a completed cached read.
+            pf_addr_q       <= pf_lookup_addr;
+            pf_rdata_q      <= pf_rdata;
+            pf_tag_q        <= pf_read_tag;
+            pf_read_valid_q <= pf_read_valid;
+            // A cached write commits on this same edge, after the lookup
+            // read. The entry is then good unless the write is to the
+            // byte that was looked up.
+            pf_valid_q      <= core_en && !turbo_invalidate &&
+                               ((xstate_q == X_TURBO_DONE &&
+                                 (cycle_rw_q || cycle_addr_q != pf_lookup_addr)) ||
+                                (xstate_q == X_CAPTURE));
+
             unique case (xstate_q)
                 X_CAPTURE: begin
                     cycle_d2_native_q <= 1'b0;
-                    if (!core_res_n || !d2_time_ready || video_barrier) begin
+                    if (pf_accept) begin
+                        // The core took the prefetched code byte. Stay
+                        // here; the next byte is already being looked up.
+                        cycle_addr_q  <= pf_addr_q;
+                        cycle_rw_q    <= 1'b1;
+                        cycle_is_pc_q <= 1'b1;
+                        xstate_q      <= X_CAPTURE;
+                    end
+                    else if (!core_res_n || !d2_time_ready || video_barrier) begin
                         // Core held/reset: idle here (cheap wait state).
                         xstate_q <= X_CAPTURE;
                     end
                     else begin
+                        cycle_is_pc_q           <= core_addr_is_pc;
                         cycle_addr_q            <= core_addr;
                         cycle_wdata_q           <= core_data_out;
                         cycle_rw_q              <= core_rwb;

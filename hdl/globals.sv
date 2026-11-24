@@ -167,7 +167,7 @@ package globals;
         logic sw_lcram_bank2;
         logic sw_lcram_read;
         logic sw_lcram_write;
-        logic [6:0] sw_ramworks_bank;
+        logic [7:0] sw_ramworks_bank;
     } SoftSwitchState;
 
     /* Switch-state inputs consumed by translate_apple_addr. Two producers
@@ -189,7 +189,7 @@ package globals;
         logic       sw_lcram_bank2;
         logic       sw_lcram_read;
         logic       sw_lcram_write;
-        logic [6:0] sw_ramworks_bank;
+        logic [7:0] sw_ramworks_bank;
     } TranslateState;
 
     function automatic TranslateState translate_state_from_sss(
@@ -246,7 +246,8 @@ package globals;
         q_is_hires_pg  = (addr_in[15:13] == 3'b001);   // 2000-3fff
         q_is_text_pg1  = (addr_in[15:10] == 6'b000001); // 0400-07ff
         q_is_display_window = q_is_text_pg1 || (st.sw_hires && q_is_hires_pg);
-        q_aux_bank_full = {1'b0, st.sw_ramworks_bank} + 8'd1;
+        // The bank register never holds 255, so this cannot wrap to bank 0.
+        q_aux_bank_full = st.sw_ramworks_bank + 8'd1;
 
         // ---- Physical 64K bank selection ----
         if (q_is_cxxx) begin

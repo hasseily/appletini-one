@@ -22,7 +22,7 @@ module tb_iigs_live_slots;
     logic sample_early_en = 1'b0, sample_late_en = 1'b0;
 
     soft_switch_manager switches (
-        .clk, .rstn(resetn), .ramworks_en(1'b0),
+        .clk, .rstn(resetn), .ramworks_en(1'b0), .ramworks_16mb(1'b0),
         .iigs_profile(gs_qualified), .iigs_bootstrap_slot7(1'b0),
         .iigs_boot_mask(report_mask), .iigs_boot_mask_valid(report_valid),
         .ab_read(host), .sss, .iigs_live_mask(live_mask),

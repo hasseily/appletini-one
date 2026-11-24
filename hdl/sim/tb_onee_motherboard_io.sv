@@ -76,7 +76,7 @@ module tb_onee_motherboard_io;
         .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
         .clk(clk),
         .rstn(resetn),
-        .ramworks_en(1'b0),
+        .ramworks_en(1'b0), .ramworks_16mb(1'b0),
         .ab_read(softswitch_ab_read),
         .sss(sss)
     );

@@ -96,7 +96,7 @@ module tb_pc_transporter_card;
         .iigs_boot_mask(8'h00),
         .iigs_boot_mask_valid(1'b0),
         .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
-        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ab_read(switch_read), .sss(sss),
+        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ramworks_16mb(1'b0), .ab_read(switch_read), .sss(sss),
         .iigs_live_mask(), .iigs_live_mask_valid(), .iigs_io_mask(gs_io_mask),
         .iigs_rom_mask(gs_rom_mask)
     );

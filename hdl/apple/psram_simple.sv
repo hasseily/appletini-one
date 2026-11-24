@@ -32,9 +32,9 @@
 // so background work runs whenever the driver is free. On handback, finish
 // the owned operation before restoring native serves and admission.
 //
-// Address space: first PSRAM chip only, 8 MB. Banks 1..127 are
-// servable (bank 128 -- RamWorks bank-select 127 -- would cross the
-// 8 MB boundary and is not served; the PS advertises a matching size).
+// Address space: 16 MB of byte addresses on the two PSRAM chips (see
+// chip_addr in psram_driver). Banks 1..255 are servable. Bank 0 is main
+// memory and is never served; its 64 KiB of PSRAM is free for the PS.
 //////////////////////////////////////////////////////////////////////////////////
 
 module psram_simple (
@@ -121,8 +121,8 @@ module psram_simple (
     // Serve decision (combinational, at sss_en time).
     // ------------------------------------------------------------------
     wire [7:0] decode_bank = sss.addr_decode[23:16];
-    /* decode_bank 0x80 supplies RamWorks bank $7F through address bit 23.
-     * Do not reject decode_bank[7]. */
+    /* decode_bank 0x80 and above use address bit 23. Do not reject
+     * decode_bank[7]. */
     wire aux_cycle = (sss.route_kind == APPLE_ROUTE_CACHE) &&
                      sss.addr_decode_en &&
                      (decode_bank != 8'd0) &&

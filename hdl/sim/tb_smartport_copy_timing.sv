@@ -107,7 +107,7 @@ module tb_smartport_copy_timing;
         .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
         .clk(clk),
         .rstn(resetn),
-        .ramworks_en(1'b0),
+        .ramworks_en(1'b0), .ramworks_16mb(1'b0),
         .ab_read(softswitch_ab_read),
         .sss(sss)
     );
@@ -142,7 +142,7 @@ module tb_smartport_copy_timing;
         .overlay_devsel_enabled(), .overlay_capture_armed(), .overlay_capture_bank_aux(),
         .overlay_capture_base(), .overlay_capture_limit(), .vtw_valid(1'b0),
         .vtw_target(3'd0), .vtw_addr(11'd0), .vtw_rw(1'b1), .vtw_wdata(8'd0),
-        .vtw_sss_snapshot(22'd0), .vtw_ready(), .vtw_resp_valid(), .vtw_resp_rdata()
+        .vtw_sss_snapshot(23'd0), .vtw_ready(), .vtw_resp_valid(), .vtw_resp_rdata()
     );
     logic [15:0] dbg_core_pc;
     logic bus_owned;
@@ -174,7 +174,7 @@ module tb_smartport_copy_timing;
         .d2_native_cycle_active(),
         .d2_time_ready(1'b1),
         .d2_write_timing_active(1'b0),
-        .ramworks_en(1'b0),
+        .ramworks_en(1'b0), .ramworks_16mb(1'b0),
         .video_vbl(video_vblank),
         .video_mode_50hz(1'b1),
         .video_line(line_in_frame),

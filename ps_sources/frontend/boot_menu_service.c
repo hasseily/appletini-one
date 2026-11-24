@@ -422,6 +422,7 @@ static uint8_t machine_mode_from_id(uint8_t id)
  * it and the Appletini leaves those cycles alone. */
 extern uint8_t appletini_config_ram_enabled(void);
 extern uint8_t appletini_config_ramworks_enabled(void);
+extern uint8_t appletini_config_ramworks_16mb(void);
 /* From vtw_service.c: a virtual-TransWarp session owns the machine. */
 extern uint8_t vtw_service_session_active(void);
 
@@ -453,7 +454,8 @@ static void machine_refresh_aux_policy(void)
          g_aux_card_present == 0U) ? 1U : 0U;
     const uint8_t rw_want =
         ((want != 0U || vtw_owns_aux != 0U) &&
-         appletini_config_ramworks_enabled() != 0U) ? 1U : 0U;
+         appletini_config_ramworks_enabled() != 0U) ?
+        (appletini_config_ramworks_16mb() != 0U ? 3U : 1U) : 0U;
     if (want != g_aux_provide_applied) {
         g_aux_provide_applied = want;
         REG_WRITE(CARD_CTRL_AUX_PROVIDE_REG, (uint32_t)want);
@@ -463,7 +465,8 @@ static void machine_refresh_aux_policy(void)
     if (rw_want != g_ramworks_applied) {
         g_ramworks_applied = rw_want;
         REG_WRITE(CARD_CTRL_RAMWORKS_EN_REG, (uint32_t)rw_want);
-        uart_puts(UART0_BASE, rw_want ? "machine: ramworks 8MB ON\r\n"
+        uart_puts(UART0_BASE, rw_want == 3U ? "machine: ramworks 16MB ON\r\n" :
+                              rw_want ? "machine: ramworks 8MB ON\r\n"
                                       : "machine: ramworks OFF\r\n");
     }
 }

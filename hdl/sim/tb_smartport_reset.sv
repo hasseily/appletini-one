@@ -48,7 +48,7 @@ module tb_smartport_reset;
         .vtw_addr(11'd0),
         .vtw_rw(1'b1),
         .vtw_wdata(8'd0),
-        .vtw_sss_snapshot(22'd0),
+        .vtw_sss_snapshot(23'd0),
         .vtw_ready(),
         .vtw_resp_valid(),
         .vtw_resp_rdata()

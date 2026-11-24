@@ -126,10 +126,10 @@ module vtw_copy_engine (
                     CHECK: begin
                         // No ROM writes, out-of-range banks, zero lengths,
                         // or overlapping copies. Wider sums catch overflow.
-                        if (left_q == 0 || dst_q >= 24'h800000 ||
-                            ({1'b0, dst_q} + {9'd0, left_q}) > 25'h0800000 ||
-                            (!fill_q && (src_q >= 24'h800000 ||
-                            ({1'b0, src_q} + {9'd0, left_q}) > 25'h0800000 ||
+                        if (left_q == 0 ||
+                            ({1'b0, dst_q} + {9'd0, left_q}) > 25'h1000000 ||
+                            (!fill_q && (
+                            ({1'b0, src_q} + {9'd0, left_q}) > 25'h1000000 ||
                             (({1'b0, src_q} < {1'b0, dst_q} + {9'd0, left_q}) &&
                              ({1'b0, dst_q} < {1'b0, src_q} + {9'd0, left_q}))))) begin
                             error <= 1'b1;

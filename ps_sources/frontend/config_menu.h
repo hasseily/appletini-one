@@ -315,6 +315,7 @@ typedef struct {
     uint8_t clock_enabled;
     uint8_t ram_enabled;
     uint8_t ramworks_enabled;
+    uint8_t ramworks_16mb;          /* 255 banks in place of 127 */
     uint8_t sp_ramdisk_enabled;
     uint8_t iigs_slot3_profile;     /* working config; latched at firmware startup */
     uint8_t settings_loaded;

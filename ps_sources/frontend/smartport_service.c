@@ -76,8 +76,8 @@
 #define SP_SSS_PAGE2_BIT        (1UL << 6)
 #define SP_SSS_HIRES_BIT        (1UL << 7)
 #define SP_SSS_RAMWORKS_SHIFT   14U
-#define SP_SSS_RAMWORKS_MASK    0x7FUL
-#define SP_SSS_VTW_WIDE_BIT     (1UL << 21)
+#define SP_SSS_RAMWORKS_MASK    0xFFUL
+#define SP_SSS_VTW_WIDE_BIT     (1UL << 22)
 
 #define SP_VTW_SHADOW_AUX_BASE  0x10000UL
 #define SP_VTW_POINTER_POLLS    64U
@@ -351,8 +351,8 @@ static void sp_response_commit(uint8_t accelerated)
 
 /* Map one accelerated Apple write using the private vTW switch snapshot.
  * Banks 0/1 live in the vTW BRAM shadow. Banks 2..127 live in PSRAM and can
- * use the existing PS-DMA engine. Bank 128 crosses the available 8 MB PSRAM
- * chip and stays on the byte path. */
+ * use the existing PS-DMA engine. With 16 MB RamWorks this includes banks
+ * 128..255. */
 static int sp_vtw_memory_phys(uint16_t apple_addr,
                               uint32_t sss,
                               uint8_t write_access,
@@ -385,7 +385,7 @@ static int sp_vtw_memory_phys(uint16_t apple_addr,
         }
     }
 
-    if (bank > 127U) {
+    if (bank > 255U) {
         return -1;
     }
     *bank_out = bank;
@@ -474,7 +474,7 @@ static uint8_t sp_psdma_to_ramworks(uint32_t psram_addr,
     if (data == NULL || length == 0U ||
         (((uint32_t)(uintptr_t)data) & 7U) != 0U ||
         (length & 7U) != 0U ||
-        psram_addr + length > 0x00800000UL) {
+        psram_addr + length > 0x01000000UL) {
         return SP_VTW_COPY_FALLBACK;
     }
 

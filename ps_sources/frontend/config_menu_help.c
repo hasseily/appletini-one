@@ -671,9 +671,15 @@ HELP(ram_iigs_slot3,
     "SmartPort stays in logical slot 7. Leave slot 4 internal on a ROM 1 IIgs to keep the native mouse.",
     "Aux RAM, RamWorks, TransWarp, and AD8088 host-memory access stay blocked on the IIgs.");
 
+HELP(ram_16mb,
+    "Gives the RamWorks expansion 255 banks (16MB) in place of 128 banks (8MB).",
+    "Change this only from BOOT mode. Leave it off if a program fails to find its memory:",
+    "some programs accept bank numbers up to 127 only.");
+
 static const help_override_t ram_overrides[] = {
     OVERRIDE(0, ram_provide),
     OVERRIDE(1, ram_iigs_slot3),
+    OVERRIDE(2, ram_16mb),
 };
 
 /* ======================================================================== */

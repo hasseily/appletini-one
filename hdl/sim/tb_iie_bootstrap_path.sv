@@ -33,7 +33,7 @@ module apple_boot_report_trace #(parameter bit GS = 0);
         logic live_mask_valid;
         wire bootstrap_slot7 = machine_identity_iigs && !live_mask_valid;
         soft_switch_manager switches (
-            .clk, .rstn(resetn), .ramworks_en(1'b0),
+            .clk, .rstn(resetn), .ramworks_en(1'b0), .ramworks_16mb(1'b0),
             .iigs_profile(machine_identity_iigs),
             .iigs_bootstrap_slot7(bootstrap_slot7),
             .iigs_boot_mask(boot_iigs_slot_mask),

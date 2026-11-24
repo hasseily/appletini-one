@@ -19,7 +19,7 @@ module tb_iigs_phasor;
     logic [7:0] observed_reply;
 
     soft_switch_manager switches (
-        .clk, .rstn(resetn), .ramworks_en(1'b0), .iigs_profile(1'b1),
+        .clk, .rstn(resetn), .ramworks_en(1'b0), .ramworks_16mb(1'b0), .iigs_profile(1'b1),
         .iigs_bootstrap_slot7(1'b0), .iigs_boot_mask(8'h00),
         .iigs_boot_mask_valid(1'b0), .iigs_native_video(1'b0),
         .iigs_bank_latch(1'b0), .ab_read(host), .sss,

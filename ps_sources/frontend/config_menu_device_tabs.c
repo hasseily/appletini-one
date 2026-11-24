@@ -839,14 +839,16 @@ void config_menu_draw_ram(uint16_t *fb,
     }
     hgr_draw_check_item(fb, x, y + row_h, w, (uint8_t)(menu->item_focus == 1U),
                         menu->iigs_slot3_profile, "IIgs physical slot 3 (after restart)");
+    hgr_draw_check_item(fb, x, y + (2 * row_h), w, (uint8_t)(menu->item_focus == 2U),
+                        menu->ramworks_16mb, "RamWorks 16MB in place of 8MB");
     if (menu->vtw_enabled != 0U && physical_iigs == 0U) {
         /* Informational only (not a focusable item): the accelerated
          * machine always has 128K from shadow memory; with Appletini
          * RAM enabled (no physical aux card) the accelerator serves the
          * full 8MB RamWorks from PSRAM at speed. */
-        hgr_draw_item_dimmed(fb, x, y + (2 * row_h), w, 0U,
+        hgr_draw_item_dimmed(fb, x, y + (3 * row_h), w, 0U,
                              menu->ram_enabled != 0U
-                                 ? "TransWarp on: 128K + 8MB RamWorks, accelerated"
+                                 ? "TransWarp on: 128K + RamWorks, accelerated"
                                  : "TransWarp on: 128K built in");
     }
 }

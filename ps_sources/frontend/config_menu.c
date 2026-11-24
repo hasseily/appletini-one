@@ -3917,6 +3917,8 @@ static void config_menu_parse_key_value(config_menu_t *menu, const char *key, co
     } else if (strcmp(key, "ram.enabled") == 0) {
         menu->ram_enabled = config_menu_bool_text(value);
         menu->ramworks_enabled = menu->ram_enabled;
+    } else if (strcmp(key, "ram.ramworks16mb") == 0) {
+        menu->ramworks_16mb = config_menu_bool_text(value);
     } else if (strcmp(key, "smartport.ram32.enabled") == 0) {
         menu->sp_ramdisk_enabled = config_menu_bool_text(value);
     }
@@ -4151,7 +4153,8 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                "ethernet.gateway=%s\n"
                "ethernet.dns=%s\n"
                "clock.enabled=%s\n"
-               "ram.enabled=%s\n",
+               "ram.enabled=%s\n"
+               "ram.ramworks16mb=%s\n",
                config_menu_on_off(menu->sp_ramdisk_enabled),
                config_menu_on_off(menu->supersprite_enabled),
                config_menu_on_off(menu->sdd_stream_enabled),
@@ -4165,7 +4168,8 @@ uint8_t config_menu_save_settings_to_path(config_menu_t *menu,
                ethernet_gateway,
                ethernet_dns,
                config_menu_on_off(menu->clock_enabled),
-               config_menu_on_off(menu->ram_enabled));
+               config_menu_on_off(menu->ram_enabled),
+               config_menu_on_off(menu->ramworks_16mb));
 
 #undef APPEND_CFG
 
@@ -4990,6 +4994,7 @@ static void config_menu_reset_settings_only(config_menu_t *menu)
     menu->clock_enabled = CONFIG_DEFAULT_CLOCK_ENABLED;
     menu->ram_enabled = CONFIG_DEFAULT_RAM_ENABLED;
     menu->ramworks_enabled = menu->ram_enabled;
+    menu->ramworks_16mb = 0U;
     menu->sp_ramdisk_enabled = CONFIG_DEFAULT_SP_RAMDISK_ENABLED;
     config_menu_usb_bindings_set_defaults(menu);
     onee_input_service_default_joystick_config(&menu->joystick_config);
@@ -5796,7 +5801,7 @@ static uint32_t config_menu_tab_item_count(const config_menu_t *menu)
     case CONFIG_TAB_TRANSWARP:
         return CONFIG_TRANSWARP_ITEM_COUNT;
     case CONFIG_TAB_RAM:
-        return 2U;
+        return 3U;
     case CONFIG_TAB_PRINTING:
         return CONFIG_PRINTING_ITEM_COUNT;
     case CONFIG_TAB_ABOUT:
@@ -8142,6 +8147,16 @@ static void config_menu_activate_item(config_menu_t *menu)
                 "RAM CAN ONLY CHANGE FROM BOOT MENU");
             break;
         }
+        if (menu->item_focus == 2U) {
+            /* The size is safe to change only before software runs: a
+             * program may already hold a bank number above 127. */
+            menu->ramworks_16mb = menu->ramworks_16mb ? 0U : 1U;
+            config_menu_set_status(menu, 0U, menu->ramworks_16mb
+                ? "RAMWORKS SIZE IS 16MB (255 BANKS)"
+                : "RAMWORKS SIZE IS 8MB (128 BANKS)");
+            config_menu_save_settings(menu);
+            break;
+        }
         if (boot_menu_service_aux_card_present() != 0U) {
             config_menu_set_status(menu, 1U,
                 "PHYSICAL AUX CARD DETECTED - APPLETINI RAM STAYS OFF");
@@ -8389,6 +8404,7 @@ void config_menu_init(config_menu_t *menu)
     menu->clock_enabled = CONFIG_DEFAULT_CLOCK_ENABLED;
     menu->ram_enabled = CONFIG_DEFAULT_RAM_ENABLED;
     menu->ramworks_enabled = menu->ram_enabled;
+    menu->ramworks_16mb = 0U;
     menu->sp_ramdisk_enabled = CONFIG_DEFAULT_SP_RAMDISK_ENABLED;
     config_menu_clock_default(menu);
     config_menu_profiles_init(menu);

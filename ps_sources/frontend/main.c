@@ -225,6 +225,13 @@ uint8_t appletini_config_ramworks_enabled(void)
     return (g_config_menu_state == NULL) ? 0U
          : (g_config_menu_state->ramworks_enabled != 0U) ? 1U : 0U;
 }
+
+/* RamWorks size: 16 MB (255 banks) in place of 8 MB. Defaults OFF. */
+uint8_t appletini_config_ramworks_16mb(void)
+{
+    return (g_config_menu_state == NULL) ? 0U
+         : (g_config_menu_state->ramworks_16mb != 0U) ? 1U : 0U;
+}
 static uint32_t g_card_slot_enable_mask = CARD_CTRL_SLOT_ENABLE_RESET_MASK;
 static uint32_t g_card_slot_effective_mask =
     CARD_CTRL_SLOT_ENABLE_REQUIRED_MASK;

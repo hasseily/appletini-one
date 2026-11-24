@@ -53,7 +53,7 @@ module tb_onee_ssi263_clock;
         .iigs_boot_mask(8'h00),
         .iigs_boot_mask_valid(1'b0),
         .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
-        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ab_read(bus), .sss(sss)
+        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ramworks_16mb(1'b0), .ab_read(bus), .sss(sss)
     );
     mockingboard card_i (
         .clk(clk), .rstn(rstn), .apple_q3_raw(q3), .standalone(standalone), .iigs_data_tick(1'b0),

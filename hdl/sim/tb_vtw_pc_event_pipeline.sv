@@ -47,7 +47,7 @@ module tb_vtw_pc_event_pipeline;
         .d2_native_cycle_active(),
         .d2_time_ready(1'b1),
         .d2_write_timing_active(1'b0),
-        .ramworks_en(1'b0),
+        .ramworks_en(1'b0), .ramworks_16mb(1'b0),
         .video_vbl(1'b0),
         .video_mode_50hz(1'b0),
         .video_line(9'd0),

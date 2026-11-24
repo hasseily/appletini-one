@@ -171,7 +171,7 @@ module tb_vtw_disk2_speed_matrix;
         .d2_native_cycle_active(disk2_native_cycle_active),
         .d2_time_ready(disk2_time_ready),
         .d2_write_timing_active(disk2_write_timing_active),
-        .ramworks_en(1'b0), .video_vbl(1'b0),
+        .ramworks_en(1'b0), .ramworks_16mb(1'b0), .video_vbl(1'b0),
         .post_main_wide(1'b0),
         .overlay_capture_armed(1'b0),
         .overlay_capture_bank_aux(1'b0),
@@ -433,19 +433,21 @@ module tb_vtw_disk2_speed_matrix;
         integer sum_gap;
         integer accept_before;
         integer tick_before;
+        integer accept_after;
 
         set_preset(mode, divider);
         repeat (5) wait_normal_accept();
-        // Drain the final warm-up acceptance from the one-edge tick stage
-        // before taking the baseline counts.
+        // The tick of an acceptance comes one clock after it. TURBO code
+        // bytes can complete on adjacent clocks, so count the ticks over
+        // the same window moved by that one clock.
+        accept_before = normal_accept_count;
         @(posedge clk);
         #1ps;
+        tick_before = normal_tick_count;
         previous_cycle = -1;
         min_gap = 32'h7fffffff;
         max_gap = 0;
         sum_gap = 0;
-        accept_before = normal_accept_count;
-        tick_before = normal_tick_count;
         for (int i = 0; i < SPEED_SAMPLES; i++) begin
             wait_normal_accept();
             if (previous_cycle >= 0) begin
@@ -459,7 +461,10 @@ module tb_vtw_disk2_speed_matrix;
         average_gap = sum_gap / (SPEED_SAMPLES - 1);
         repeat (3) @(posedge clk);
         #1ps;
-        check((normal_accept_count - accept_before) ==
+        accept_after = normal_accept_count;
+        @(posedge clk);
+        #1ps;
+        check((accept_after - accept_before) ==
               (normal_tick_count - tick_before),
               $sformatf("%s lost or duplicated a normal Disk II tick", label));
         if (mode == 2'd0) begin
@@ -468,7 +473,7 @@ module tb_vtw_disk2_speed_matrix;
                             label, min_gap, max_gap));
         end
         else if (mode == 2'd3) begin
-            check(min_gap >= 2 && average_gap < 4,
+            check(min_gap >= 1 && average_gap < 4,
                   $sformatf("%s did not keep the TURBO path while its motor spun (min=%0d avg=%0d max=%0d)",
                             label, min_gap, average_gap, max_gap));
         end

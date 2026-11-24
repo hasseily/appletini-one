@@ -203,7 +203,7 @@ module tb_vtw_disk2_woz_e2e;
         .d2_native_cycle_active(disk2_native_cycle_active),
         .d2_time_ready(disk2_time_ready),
         .d2_write_timing_active(disk2_write_timing_active),
-        .ramworks_en(1'b0), .video_vbl(1'b0),
+        .ramworks_en(1'b0), .ramworks_16mb(1'b0), .video_vbl(1'b0),
         .post_main_wide(1'b0), .overlay_capture_armed(1'b0),
         .overlay_capture_bank_aux(1'b0), .overlay_capture_base(16'd0),
         .overlay_capture_limit(16'd0), .video_mode_50hz(1'b0),

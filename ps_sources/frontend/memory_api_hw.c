@@ -152,8 +152,8 @@ static uint8_t hw_dma(uint32_t physical, uint16_t length,
 {
     psdma_result_t result;
     if (length == 0U || length > MEMORY_API_DMA_CHUNK ||
-        ((physical | length) & 7U) != 0U || physical >= 0x800000UL ||
-        length > 0x800000UL - physical)
+        ((physical | length) & 7U) != 0U || physical >= 0x1000000UL ||
+        length > 0x1000000UL - physical)
         return MEMORY_API_RANGE;
     if (!hw_held(NULL)) return MEMORY_API_SESSION_LOST;
     /* Both directions first clean this cached bounce buffer. On a DMA read,

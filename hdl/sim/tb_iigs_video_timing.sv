@@ -15,7 +15,7 @@ module tb_iigs_video_timing;
 
     apple_iigs_video_timing #(.CLOCK_TIMEOUT_BITS(4)) dut (.*);
     soft_switch_manager switches (
-        .clk, .rstn(resetn), .ramworks_en(1'b1), .iigs_profile(enabled),
+        .clk, .rstn(resetn), .ramworks_en(1'b1), .ramworks_16mb(1'b0), .iigs_profile(enabled),
         .iigs_bootstrap_slot7(1'b0), .iigs_boot_mask(8'h00),
         .iigs_boot_mask_valid(1'b0), .iigs_native_video(enabled),
         .iigs_bank_latch(c029[0]), .ab_read, .sss,

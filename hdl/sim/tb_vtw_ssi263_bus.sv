@@ -79,7 +79,7 @@ module tb_vtw_ssi263_bus;
         .iigs_boot_mask(8'h00),
         .iigs_boot_mask_valid(1'b0),
         .iigs_native_video(1'b0), .iigs_bank_latch(1'b0),
-        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ab_read(bus), .sss(sss)
+        .clk(clk), .rstn(rstn), .ramworks_en(1'b0), .ramworks_16mb(1'b0), .ab_read(bus), .sss(sss)
     );
     vtw_bus_engine engine_i (
         .clk(clk), .rstn(rstn), .enable(enable), .host_is_iiplus(1'b0),

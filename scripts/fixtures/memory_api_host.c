@@ -375,6 +375,8 @@ static void test_direct_transfers_and_progress(void)
     ++passed;
 }
 
+uint8_t appletini_config_ramworks_16mb(void) { return 0U; }
+
 int main(void)
 {
     test_header_and_descriptor_validation();

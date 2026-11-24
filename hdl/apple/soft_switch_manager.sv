@@ -2,6 +2,7 @@ module soft_switch_manager (
     input  logic                       clk,
     input  logic                       rstn,
     input  logic                       ramworks_en,
+    input  logic                       ramworks_16mb,
     input  logic                       iigs_profile,
     input  logic                       iigs_bootstrap_slot7,
     input  logic [7:0]                 iigs_boot_mask,
@@ -60,7 +61,7 @@ module soft_switch_manager (
     logic [23:0] ss_addr_decode_late;
     logic        ss_addr_decode_late_en;
     apple_route_kind_e ss_route_kind;
-    logic [6:0]  ss_ramworks_bank;
+    logic [7:0]  ss_ramworks_bank;
     logic        iigs_report_seen;
     logic        iigs_profile_q;
     logic [2:0]  iigs_c8_slot;
@@ -188,9 +189,10 @@ module soft_switch_manager (
     // ---- Bank select (combinational decode of current address) ----
     // Selects which 64K physical bank the access targets:
     //   0        : main memory
-    //   1..128   : aux/RamWorks banks (8192KB card, including IIe aux)
-    // ss_ramworks_bank is 7 bits (0-127); the +1 mapping yields bank_sel
-    // 1-128, which requires 8 bits and lands in ss_addr_decode[23:16].
+    //   1..128   : aux/RamWorks banks (8 MB card, including IIe aux)
+    //   129..255 : more RamWorks banks when ramworks_16mb is set
+    // ss_ramworks_bank holds 0-254; the +1 mapping yields bank_sel 1-255,
+    // which lands in ss_addr_decode[23:16]. Value 255 is never stored.
     // 80STORE+PAGE2 overrides AUXREAD/AUXWRITE for display windows
     // ($0400-$07FF text, $2000-$3FFF HGR) and routes them to the currently
     // selected RamWorks bank. The video fetcher intentionally reads fixed
@@ -250,24 +252,26 @@ module soft_switch_manager (
             ss_addr_decode_late    <= '0;
             ss_addr_decode_late_en <= 1'b0;
             ss_route_kind          <= APPLE_ROUTE_INVALID;
-            ss_ramworks_bank       <= 7'b0;
+            ss_ramworks_bank       <= 8'b0;
         end
         else begin
             // -------- RamWorks bank select (C071/C073) --------
             // Captured at data_en time when the data bus carries the value.
-            // Values > 127 are ignored (rather than masked).
+            // Values that the selected size does not have are ignored.
             /* RamWorks bank select ($C071/$C073, data bit7=0). Gated:
              * these addresses sit in the //e's paddle-trigger region,
              * so with the feature off a stray write must not re-bank
-             * auxiliary memory. With it on, the full 127 extra banks
-             * (8 MB with base aux) are exposed; software sizes the
+             * auxiliary memory. With it on, 127 extra banks
+             * (8 MB with base aux) are exposed, or 254 extra banks with
+             * ramworks_16mb (value 255 is never a bank); software sizes the
              * card by probing. */
             if (ramworks_en && ab_read.data_en && !ab_read.rw && is_c0xx
                 && (ab_read.addr[7:0] == 8'h71 || ab_read.addr[7:0] == 8'h73)
-                && ab_read.data[7] == 1'b0)
-                ss_ramworks_bank <= ab_read.data[6:0];
-            /* bank_sel 0x80 supplies the final RamWorks bank through PSRAM
-             * address bit 23. Keep that bit in the translated address. */
+                && (ab_read.data[7] == 1'b0 ||
+                    (ramworks_16mb && ab_read.data != 8'hFF)))
+                ss_ramworks_bank <= ab_read.data;
+            /* bank_sel 0x80 and above use PSRAM address bit 23. Keep that
+             * bit in the translated address. */
 
             // -------- INH-path early decode (addr_en) --------
             // The PSRAM/INH serving arm must decide before the
@@ -371,7 +375,7 @@ module soft_switch_manager (
                     TranslateState obs_state;
                     obs_state = xlate_st;
                     if (iigs_native_video)
-                        obs_state.sw_ramworks_bank = 7'd0;
+                        obs_state.sw_ramworks_bank = 8'd0;
                     translate_apple_addr(obs_state, ab_read.addr, ab_read.rw,
                                          rb_decoded_addr_obs, rb_route_kind_obs);
                     // Apple IIgs Hardware Reference describes NEWVIDEO.0
@@ -426,7 +430,7 @@ module soft_switch_manager (
                 // Ctrl-Reset selects base auxiliary bank 0 because Apple
                 // startup software assumes that bank while rebuilding its
                 // memory state.
-                ss_ramworks_bank       <= 7'b0;
+                ss_ramworks_bank       <= 8'b0;
             end
         end
     end

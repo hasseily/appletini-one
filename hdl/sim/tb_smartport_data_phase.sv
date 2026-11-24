@@ -86,7 +86,7 @@ module tb_smartport_data_phase;
             .overlay_capture_bank_aux(aux[v]), .overlay_capture_base(base[v]),
             .overlay_capture_limit(limit[v]), .vtw_valid(1'b0), .vtw_target(3'd0),
             .vtw_addr(11'd0), .vtw_rw(1'b1), .vtw_wdata(8'd0),
-            .vtw_sss_snapshot(22'd0), .vtw_ready(), .vtw_resp_valid(), .vtw_resp_rdata()
+            .vtw_sss_snapshot(23'd0), .vtw_ready(), .vtw_resp_valid(), .vtw_resp_rdata()
         );
     end
 

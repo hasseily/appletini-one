@@ -35,6 +35,14 @@ static void put32(uint8_t *p, uint32_t value)
     put16(p + 2, (uint16_t)(value >> 16));
 }
 
+extern uint8_t appletini_config_ramworks_16mb(void);
+
+static uint8_t max_aux_bank(void)
+{
+    return appletini_config_ramworks_16mb() != 0U ?
+        MEMORY_API_MAX_AUX_BANK_16MB : MEMORY_API_MAX_AUX_BANK;
+}
+
 static uint8_t endpoint(const uint8_t *p, uint16_t length, uint32_t *phys)
 {
     uint16_t address = get16(p + 2);
@@ -42,7 +50,7 @@ static uint8_t endpoint(const uint8_t *p, uint16_t length, uint32_t *phys)
 
     if (p[0] > MEMORY_API_AUX ||
         (p[0] == MEMORY_API_MAIN && p[1] != 0U) ||
-        (p[0] == MEMORY_API_AUX && p[1] > MEMORY_API_MAX_AUX_BANK)) {
+        (p[0] == MEMORY_API_AUX && p[1] > max_aux_bank())) {
         return MEMORY_API_RANGE;
     }
     if (length == 0U || address < MEMORY_API_MIN_ADDR ||
@@ -75,7 +83,7 @@ void memory_api_status(uint8_t out[MEMORY_API_STATUS_SIZE],
                     MEMORY_API_FEATURE_PRIVATE);
     put16(out + 10, MEMORY_API_MIN_ADDR);
     put16(out + 12, MEMORY_API_LIMIT_ADDR);
-    out[14] = MEMORY_API_MAX_AUX_BANK;
+    out[14] = max_aux_bank();
     out[15] = backend->available(backend->ctx) ? 1U : 0U;
     put32(out + 16, backend->micros(backend->ctx));
     put16(out + 20, MEMORY_API_DMA_CHUNK);

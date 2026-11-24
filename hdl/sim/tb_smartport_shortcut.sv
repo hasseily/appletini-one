@@ -30,7 +30,7 @@ module tb_smartport_shortcut;
     logic [10:0] vtw_addr = 0;
     logic       vtw_rw = 1;
     logic [7:0] vtw_wdata = 0;
-    logic [21:0] vtw_sss_snapshot = 22'h2AAAAA;
+    logic [22:0] vtw_sss_snapshot = 23'h2AAAAA;
     logic       vtw_ready;
     logic       vtw_resp_valid;
     logic [7:0] vtw_resp_rdata;
@@ -322,7 +322,7 @@ module tb_smartport_shortcut;
         check(st_exec_vtw(st), "fast-port command is tagged as vTW");
         check(irq_count == 1, "fast-port EXECUTE pulsed the PS IRQ once");
         axi_read(R_SSS, st);
-        check(st[21:0] == vtw_sss_snapshot,
+        check(st[22:0] == vtw_sss_snapshot,
               "fast-port command latched the vTW private switch state");
 
         // PS drains aligned words and posts one aligned response word. The
@@ -433,7 +433,7 @@ module tb_smartport_shortcut;
         check(st_out(st) == 0, "native word plus scalar tail drains exactly");
 
         // ---- 5. Bus path still works after fast-port traffic ----
-        sss.sw_ramworks_bank = 7'h12;
+        sss.sw_ramworks_bank = 8'h12;
         sss.sw_ramwrt = 1'b1;
         apple_write(16'hCFF0, 8'h99);
         axi_read(R_STATUS, st);
@@ -443,7 +443,7 @@ module tb_smartport_shortcut;
         check(st_exec(st) && !st_exec_vtw(st),
               "native command is not tagged for packed acceleration");
         axi_read(R_SSS, st);
-        check(!st[21] && st[20:14] == 7'h12 && st[2],
+        check(!st[22] && st[21:14] == 8'h12 && st[2],
               "native command keeps the motherboard switch snapshot");
         axi_write(R_CONTROL, CTL_POP_IN);
         axi_write(R_OUT_PUSH, 8'h00);

@@ -673,7 +673,8 @@ HELP(ram_iigs_slot3,
 
 HELP(ram_16mb,
     "Gives the RamWorks expansion 255 banks (16MB) in place of 128 banks (8MB).",
-    "Change this only from BOOT mode. Leave it off if a program fails to find its memory:",
+    "Change this from BOOT mode, or at any time in ONE//e mode (then restart the Apple).",
+    "Leave it off if a program fails to find its memory:",
     "some programs accept bank numbers up to 127 only.");
 
 static const help_override_t ram_overrides[] = {

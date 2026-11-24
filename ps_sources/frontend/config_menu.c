@@ -8142,6 +8142,18 @@ static void config_menu_activate_item(config_menu_t *menu)
             config_menu_set_status(menu, 1U, "IIgs HOST RAM ACCESS IS OFF");
             break;
         }
+        /* ONE//e has no boot menu: its engine is stopped while this menu
+         * is open, so the size can change here. A program that already
+         * found its memory size keeps that size until the Apple restarts. */
+        if (menu->item_focus == 2U &&
+            menu->onee_mode_state == CONFIG_MENU_ONEE_MODE_RUNNING) {
+            menu->ramworks_16mb = menu->ramworks_16mb ? 0U : 1U;
+            config_menu_set_status(menu, 0U, menu->ramworks_16mb
+                ? "RAMWORKS SIZE IS 16MB - RESTART THE APPLE TO USE IT"
+                : "RAMWORKS SIZE IS 8MB - RESTART THE APPLE");
+            config_menu_save_settings(menu);
+            break;
+        }
         if (menu->usb_owned != 0U) {
             config_menu_set_status(menu, 1U,
                 "RAM CAN ONLY CHANGE FROM BOOT MENU");

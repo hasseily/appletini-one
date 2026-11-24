@@ -304,7 +304,7 @@ module vtw_core_top (
     output logic [16*32-1:0]        dbg_io_trace,
     output logic [31:0]             dbg_trace_status,
     output logic [31:0]             dbg_bus_faults,
-    output logic [255:0]            turbo_perf
+    output logic [287:0]            turbo_perf
 );
 
     import globals::*;
@@ -1218,7 +1218,11 @@ module vtw_core_top (
     logic [1:0] turbo_mode_q;
     logic turbo_ramworks_q, turbo_post_wide_q, turbo_overlay_q;
     TranslateState turbo_mapping_q;
-    wire [18:0] turbo_mapping = translate_state_from_sss(vsss);
+    // Typed, not a fixed width: a 19-bit wire cut off 80STORE when the
+    // RamWorks bank became 8 bits, and 80STORE changes then left stale
+    // bytes in the cache (F1.3.11dev1 to dev3).
+    TranslateState turbo_mapping;
+    assign turbo_mapping = translate_state_from_sss(vsss);
     always_ff @(posedge clk) begin
         if (!rstn) begin
             turbo_mode_q <= SPEED_FULL;
@@ -1232,7 +1236,7 @@ module vtw_core_top (
             turbo_ramworks_q <= ramworks_en;
             turbo_post_wide_q <= post_main_wide_eff;
             turbo_overlay_q <= overlay_capture_armed;
-            turbo_mapping_q <= TranslateState'(turbo_mapping);
+            turbo_mapping_q <= turbo_mapping;
         end
     end
     // Cxxx accesses always take the original route. Only a change in the
@@ -1259,7 +1263,7 @@ module vtw_core_top (
     wire        pf_is_code = (xstate_q == X_CAPTURE) || cycle_is_pc_q;
     wire [15:0] pf_lookup_addr = dbg_core_pc + {15'd0, pf_is_code};
     wire        pf_read_valid;
-    wire [8:0]  pf_read_tag;
+    wire [15-TURBO_BYTE_INDEX_BITS:0] pf_read_tag;
     wire [7:0]  pf_rdata;
     vtw_turbo_cache #(.BYTE_INDEX_BITS(TURBO_BYTE_INDEX_BITS)) turbo_cache_i (
         .clk(clk), .rstn(rstn), .invalidate(turbo_invalidate),
@@ -1580,7 +1584,7 @@ module vtw_core_top (
      * video barrier are taken at the lookup (see pf_valid_q), one clock
      * before the use, as the cached path takes them at its capture. */
     wire pf_tag_hit = pf_read_valid_q &&
-                      pf_tag_q == pf_addr_q[15:TURBO_BYTE_INDEX_BITS] &&
+                      pf_tag_q == 9'(pf_addr_q[15:TURBO_BYTE_INDEX_BITS]) &&
                       pf_addr_q[15:12] != 4'hC;
     wire pf_pc_ok = pf_is_code_q ? (core_pc_move == 2'd1) : (core_pc_move == 2'd0);
     assign pf_complete = (xstate_q == X_CAPTURE) && pf_valid_q && pf_tag_hit &&
@@ -1691,18 +1695,19 @@ module vtw_core_top (
 
     // Read-only performance counters. Register the predicates before the
     // adders so diagnostics do not lengthen the CPU completion paths.
-    logic [7:0] perf_events_q;
+    logic [8:0] perf_events_q;
     logic [3:0] perf_ticks_q;
     logic perf_invalidate_q;
-    logic [31:0] perf_count [0:7];
+    logic [31:0] perf_count [0:8];
     always_ff @(posedge clk) begin
         if (!rstn || dbg_clear) begin
             perf_events_q <= '0;
             perf_ticks_q <= '0;
             perf_invalidate_q <= 1'b0;
-            for (int n = 0; n < 8; n++) perf_count[n] <= '0;
+            for (int n = 0; n < 9; n++) perf_count[n] <= '0;
         end else begin
             perf_events_q <= {
+                pf_accept,
                 core_active && ((xstate_q == X_POST_STALL) ||
                     (xstate_q == X_VIDEO_WAIT) ||
                     (xstate_q == X_CAPTURE && video_barrier)),
@@ -1717,14 +1722,14 @@ module vtw_core_top (
             };
             perf_ticks_q <= core_cycle_ticks;
             perf_invalidate_q <= turbo_invalidate;
-            for (int n = 0; n < 8; n++) begin
+            for (int n = 0; n < 9; n++) begin
                 if (perf_events_q[n])
                     perf_count[n] <= perf_count[n] +
                         ((n == 2) ? {28'b0, perf_ticks_q} : 32'd1);
             end
         end
     end
-    for (genvar n = 0; n < 8; n++) begin : perf_readback
+    for (genvar n = 0; n < 9; n++) begin : perf_readback
         assign turbo_perf[32*n +: 32] = perf_count[n];
     end
 
@@ -1988,16 +1993,20 @@ module vtw_core_top (
             // the clock after a completed cached read.
             pf_addr_q       <= pf_lookup_addr;
             pf_rdata_q      <= pf_rdata;
-            pf_tag_q        <= pf_read_tag;
+            pf_tag_q        <= 9'(pf_read_tag);
             pf_read_valid_q <= pf_read_valid;
             // A cached write commits on this same edge, after the lookup
             // read. The entry is then good unless the write is to the
             // byte that was looked up.
             pf_is_code_q    <= pf_is_code;
+            // After a read miss the shadow read has just filled the whole
+            // 4-byte word, so the lookup in the completing clock sees it.
             pf_valid_q      <= core_en && !turbo_invalidate && turbo_execute &&
                                !video_sync_active && !video_full_flush &&
                                ((xstate_q == X_TURBO_DONE &&
                                  (cycle_rw_q || cycle_addr_q != pf_lookup_addr)) ||
+                                (xstate_q == X_MEM_DONE && cycle_rw_q &&
+                                 cycle_addr_q[15:12] != 4'hC) ||
                                 (xstate_q == X_CAPTURE));
 
             unique case (xstate_q)

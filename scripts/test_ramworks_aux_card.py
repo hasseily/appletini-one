@@ -46,6 +46,13 @@ def test_ramworks_bank_select_reaches_16mb() -> None:
             psram_driver.count("{cmd_q, chip_addr, ") == 4 and
             "{cmd_q, addr_q, " not in psram_driver,
             "PSRAM driver must use all 8 MB of each chip")
+    vtw_core = read("hdl/apple/vtw_core_top.sv")
+    # Every switch of the translation state must invalidate the TURBO cache.
+    # A fixed-width copy lost 80STORE when the bank register grew.
+    require("TranslateState turbo_mapping;" in vtw_core and
+            "wire [18:0] turbo_mapping" not in vtw_core and
+            "(turbo_mapping != turbo_mapping_q)" in vtw_core,
+            "the TURBO cache must compare the complete translation state")
     require("ramworks_16mb_q <= as_common.wdata[1];" in apple_top and
             apple_top.count(".ramworks_16mb(ramworks_16mb_q),") == 2,
             "register 0x62 bit 1 must select 16 MB for both switch managers")

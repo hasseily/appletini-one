@@ -838,6 +838,8 @@ module tb_vtw_turbo;
         sh_write(18'h19000, 8'h22);
         sh_write(18'h00020, 8'h33);
         sh_write(18'h10020, 8'h44);
+        sh_write(18'h00400, 8'h55);
+        sh_write(18'h10400, 8'hAA);
         absolute(8'hAD, 16'h9000);
         absolute(8'h8D, 16'hA100);
         absolute(8'h8D, 16'hC003);     // RAMRD on
@@ -869,10 +871,24 @@ module tb_vtw_turbo;
         absolute(8'h8D, 16'h9000);
         absolute(8'hAD, 16'h9000);
         absolute(8'h8D, 16'hA108);
+        // 80STORE alone changes the bank of the text page while PAGE2 is
+        // on. The cache must not return the byte of the old bank.
+        absolute(8'h8D, 16'hC055);     // PAGE2 on (80STORE is off: no effect yet)
+        absolute(8'hAD, 16'h0400);
+        absolute(8'h8D, 16'hA109);
+        absolute(8'h8D, 16'hC001);     // 80STORE on: $0400 is now aux
+        absolute(8'hAD, 16'h0400);
+        absolute(8'h8D, 16'hA10A);
+        absolute(8'h8D, 16'hC000);     // 80STORE off: $0400 is main again
+        absolute(8'hAD, 16'h0400);
+        absolute(8'h8D, 16'hA10B);
+        absolute(8'h8D, 16'hC054);     // PAGE2 off
         halt_loop();
         start_program();
-        wait_marker(8, 1);
+        wait_marker(11, 1);
         freeze_core();
+        check(marker_value[9] == 8'h55 && marker_value[10] == 8'hAA &&
+              marker_value[11] == 8'h55, "80STORE change reused an old map/data");
         check(marker_value[0] == 8'h11 && marker_value[1] == 8'h22 &&
               marker_value[2] == 8'h11, "RAMRD bank changes reused an old map/data");
         check(marker_value[3] == 8'h33 && marker_value[4] == 8'h44 &&

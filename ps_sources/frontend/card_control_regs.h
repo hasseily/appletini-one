@@ -326,6 +326,8 @@
  * accepted CPU steps, classic guest cycles, cached read hits, read misses,
  * invalidation events, Disk II wait clocks, and video/post wait clocks. */
 #define CARD_CTRL_TURBO_PERF_REG(n)             CARD_CTRL_REG_ADDR(0xA3U + (n))
+/* Read completions that used the prefetched byte (one fabric clock). */
+#define CARD_CTRL_TURBO_PREFETCH_REG            CARD_CTRL_REG_ADDR(0xB8U)
 /* USB joystick override for vTW on a physical Apple II. PADDLES stages
  * PDL0..3 in bits 7:0 through 31:24. A CONTROL write with byte 0 enabled
  * commits those paddles and bits 3:0 together: present, then raw PB0..2.

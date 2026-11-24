@@ -237,6 +237,14 @@ module w65c02_core #(
     logic [15:0] target_q;
     logic        page_cross_q;
     logic [15:0] vector_q;
+    /* Addresses with arithmetic, made one step early. The bus address then
+     * selects among registers and constants only, with no carry chain in
+     * front of the memory lookup. Each one is stable from the step that
+     * makes it to the cycle that uses it. */
+    logic [15:0] dummy_addr_q;   // discarded read: pc - 1, or pc - 2 (JMP (abs,X))
+    logic [15:0] ea_inc_q;       // ea + 1
+    logic [15:0] ea_incw_q;      // ea + 1 within the page
+    logic [7:0]  ptr_inc_q;      // zero-page pointer + 1
 
     logic        nmi_last_q;
     logic        nmi_pending_q;
@@ -1050,16 +1058,16 @@ module w65c02_core #(
                     !page_cross_q)
                     addr = ea_q;
                 else
-                    addr = pc_q - 16'd1;
+                    addr = dummy_addr_q;        // pc - 1
             end
 
             ST_NOP_ABS_DUMMY:
-                addr = pc_q - 16'd1;
+                addr = dummy_addr_q;            // pc - 1
 
             ST_PTR_LO:
                 addr = {8'h00, ptr_q};
             ST_PTR_HI:
-                addr = {8'h00, ptr_q + 8'd1};
+                addr = {8'h00, ptr_inc_q};
 
             ST_MEM_READ,
             ST_DECIMAL_EXTRA,
@@ -1141,20 +1149,21 @@ module w65c02_core #(
                 rwb = 1'b0;
             end
             ST_INT_VECTOR_LO: begin addr = vector_q; vpb_n = 1'b0; end
-            ST_INT_VECTOR_HI: begin addr = vector_q + 16'd1; vpb_n = 1'b0; end
+            // The vectors are $FFFA and $FFFE: plus one sets bit 0.
+            ST_INT_VECTOR_HI: begin addr = {vector_q[15:1], 1'b1}; vpb_n = 1'b0; end
 
             ST_JMP_IND_LO:
                 addr = ea_q;
             ST_JMP_IND_HI:
-                addr = {ea_q[15:8], ea_q[7:0] + 8'd1};
+                addr = ea_incw_q;
             ST_JMP_IND_LAST:
-                addr = ea_q + 16'd1;
+                addr = ea_inc_q;
             ST_JMP_X_DUMMY:
-                addr = pc_q - 16'd2;
+                addr = dummy_addr_q;            // pc - 2
             ST_JMP_X_LO:
                 addr = ea_q;
             ST_JMP_X_HI:
-                addr = ea_q + 16'd1;
+                addr = ea_inc_q;
 
             ST_WAIT,
             ST_STOP:
@@ -1198,6 +1207,10 @@ module w65c02_core #(
             target_q <= 16'h0000;
             page_cross_q <= 1'b0;
             vector_q <= 16'hFFFE;
+            dummy_addr_q <= 16'h0000;
+            ea_inc_q <= 16'h0000;
+            ea_incw_q <= 16'h0000;
+            ptr_inc_q <= 8'h00;
             nmi_last_q <= 1'b1;
             nmi_pending_q <= 1'b0;
             so_last_q <= 1'b1;
@@ -1228,6 +1241,10 @@ module w65c02_core #(
             target_q <= 16'h0000;
             page_cross_q <= 1'b0;
             vector_q <= 16'hFFFE;
+            dummy_addr_q <= 16'h0000;
+            ea_inc_q <= 16'h0000;
+            ea_incw_q <= 16'h0000;
+            ptr_inc_q <= 8'h00;
             nmi_last_q <= nmi_n;
             nmi_pending_q <= 1'b0;
             so_last_q <= so_n;
@@ -1447,6 +1464,8 @@ module w65c02_core #(
                     end
 
                     ST_ABS_HI: begin
+                        // The last instruction byte is at the old PC.
+                        dummy_addr_q <= pc_q;
                         hi_q <= data_in;
                         pc_q <= pc_q + 16'd1;
                         pc_move_q <= PC_MOVE_INC;
@@ -1461,6 +1480,7 @@ module w65c02_core #(
                             state_q <= ST_JMP_IND_LO;
                         end else if (op_q == OP_JMP && mode_q == AM_ABSXIND) begin
                             ea_q <= {data_in, lo_q} + {8'h00, x_q};
+                            dummy_addr_q <= pc_q - 16'd1;   // new pc - 2
                             state_q <= ST_JMP_X_DUMMY;
                         end else if (op_q == OP_NOP && mode_q == AM_ABS) begin
                             state_q <= ST_NOP_ABS_DUMMY;
@@ -1515,11 +1535,13 @@ module w65c02_core #(
                     end
 
                     ST_PTR_LO: begin
+                        ptr_inc_q <= ptr_q + 8'd1;
                         lo_q <= data_in;
                         state_q <= ST_PTR_HI;
                     end
 
                     ST_PTR_HI: begin
+                        dummy_addr_q <= pc_q - 16'd1;
                         hi_q <= data_in;
                         if (mode_q == AM_INDY) begin
                             ea_q <= {data_in, lo_q} + {8'h00, y_q};
@@ -1760,7 +1782,12 @@ module w65c02_core #(
                         state_q <= ST_FETCH;
                     end
 
-                    ST_JMP_IND_LO: begin lo_q <= data_in; state_q <= ST_JMP_IND_HI; end
+                    ST_JMP_IND_LO: begin
+                        lo_q <= data_in;
+                        ea_inc_q <= ea_q + 16'd1;
+                        ea_incw_q <= {ea_q[15:8], ea_q[7:0] + 8'd1};
+                        state_q <= ST_JMP_IND_HI;
+                    end
                     ST_JMP_IND_HI: begin hi_q <= data_in; state_q <= ST_JMP_IND_LAST; end
                     ST_JMP_IND_LAST: begin
                         pc_q <= {data_in, lo_q};
@@ -1769,7 +1796,10 @@ module w65c02_core #(
                         state_q <= ST_FETCH;
                     end
 
-                    ST_JMP_X_DUMMY: state_q <= ST_JMP_X_LO;
+                    ST_JMP_X_DUMMY: begin
+                        ea_inc_q <= ea_q + 16'd1;
+                        state_q <= ST_JMP_X_LO;
+                    end
                     ST_JMP_X_LO: begin lo_q <= data_in; state_q <= ST_JMP_X_HI; end
                     ST_JMP_X_HI: begin
                         pc_q <= {data_in, lo_q};

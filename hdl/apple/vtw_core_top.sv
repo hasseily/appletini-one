@@ -338,8 +338,10 @@ module vtw_core_top (
      * entry lives for one clock only. After a cached write it is used only
      * if the write was to a different byte. */
     wire         core_addr_is_pc;
+    wire [1:0]   core_pc_move;
     logic        cycle_is_pc_q;
     logic        pf_valid_q;
+    logic        pf_is_code_q;
     logic [15:0] pf_addr_q;
     (* DONT_TOUCH = "TRUE" *) logic [7:0] pf_rdata_q;
     logic [8:0]  pf_tag_q;
@@ -384,6 +386,7 @@ module vtw_core_top (
         .turbo(turbo_execute),
         .cycle_ticks(core_cycle_ticks),
         .addr_is_pc(core_addr_is_pc),
+        .pc_move(core_pc_move),
         .irq_n(core_irq_n),
         .nmi_n(ab_read.nmi),
         .so_n(1'b1),
@@ -1252,9 +1255,9 @@ module vtw_core_top (
                                !(xl_is_aux && cycle_addr_q[15:8] == 8'h9D);
     /* A code byte moves PC one byte on; a data cycle leaves PC as it is.
      * A prefetched completion is always a code byte. A wrong guess (branch,
-     * jump, interrupt) fails the address compare in pf_complete. */
-    wire [15:0] pf_lookup_addr = dbg_core_pc +
-        {15'd0, (xstate_q == X_CAPTURE) || cycle_is_pc_q};
+     * jump, interrupt) fails the PC-move check in pf_complete. */
+    wire        pf_is_code = (xstate_q == X_CAPTURE) || cycle_is_pc_q;
+    wire [15:0] pf_lookup_addr = dbg_core_pc + {15'd0, pf_is_code};
     wire        pf_read_valid;
     wire [8:0]  pf_read_tag;
     wire [7:0]  pf_rdata;
@@ -1568,16 +1571,22 @@ module vtw_core_top (
 
     /* The prefetched byte is good when its cache entry was valid, its tag
      * matches, and the core now reads the byte at that same address. A
-     * $Cxxx address never uses it. The video barrier is checked without its
-     * $Cxxx term, which cannot apply here. */
+     * $Cxxx address never uses it.
+     *
+     * The address was pc + 1 after a code byte, or pc after a data cycle.
+     * It is the new PC exactly when the core's last step moved PC by that
+     * same amount, which the core reports in two registered bits. This
+     * keeps a 16-bit compare out of the core enable. The speed mode and the
+     * video barrier are taken at the lookup (see pf_valid_q), one clock
+     * before the use, as the cached path takes them at its capture. */
     wire pf_tag_hit = pf_read_valid_q &&
                       pf_tag_q == pf_addr_q[15:TURBO_BYTE_INDEX_BITS] &&
                       pf_addr_q[15:12] != 4'hC;
+    wire pf_pc_ok = pf_is_code_q ? (core_pc_move == 2'd1) : (core_pc_move == 2'd0);
     assign pf_complete = (xstate_q == X_CAPTURE) && pf_valid_q && pf_tag_hit &&
-                         core_addr_is_pc && (dbg_core_pc == pf_addr_q) &&
-                         turbo_execute && pace_ok && core_active &&
-                         !turbo_invalidate && !arm_rw_flush_req &&
-                         !video_sync_active && !video_full_flush;
+                         core_addr_is_pc && pf_pc_ok &&
+                         pace_ok && core_active &&
+                         !turbo_invalidate && !arm_rw_flush_req;
     assign pf_accept = pf_complete && core_res_n && !pause && !rw_hold_q &&
                        d2_time_ready;
 
@@ -1592,8 +1601,12 @@ module vtw_core_top (
     // C070 completes privately at native cadence. Its aliases keep their
     // physical side effects (RamWorks, C074, etc.) and trigger at SERVE,
     // after any bus wait rather than when the request first reaches ROUTE.
+    // In X_DEAD only the dead completion can occur. A local term keeps the
+    // other completion logic out of the paddle counters.
+    wire core_en_dead = core_res_n && !pause && !rw_hold_q &&
+                        d2_time_ready && complete_dead;
     wire usb_paddle_trigger = usb_joystick_enabled &&
-        (((xstate_q == X_DEAD) && cycle_usb_trigger_q && core_en) ||
+        (((xstate_q == X_DEAD) && cycle_usb_trigger_q && core_en_dead) ||
          ((xstate_q == X_BUS) && cycle_addr_q[15:4] == 12'hC07 &&
           cycle_addr_q[3:0] != 4'h0 && ab_read.serve_en &&
           ab_read.cycle_valid && ab_read.addr == cycle_addr_q));
@@ -1620,7 +1633,7 @@ module vtw_core_top (
             if (!(|usb_paddle_active_q)) usb_paddle_poll_q <= 1'b0;
             if (((xstate_q == X_ROUTE) && xl_usb_paddle_rd &&
                  (|usb_paddle_active_q)) ||
-                ((xstate_q == X_DEAD) && cycle_usb_trigger_q && core_en))
+                ((xstate_q == X_DEAD) && cycle_usb_trigger_q && core_en_dead))
                 usb_paddle_poll_q <= 1'b1;
             // Native idle bus cycles count too, including while paused.
             if (ab_read.data_en && ab_read.cycle_valid) begin
@@ -1734,6 +1747,7 @@ module vtw_core_top (
             turbo_write_phys_q  <= '0;
             cycle_is_pc_q       <= 1'b0;
             pf_valid_q          <= 1'b0;
+            pf_is_code_q        <= 1'b0;
             pf_addr_q           <= '0;
             pf_rdata_q          <= 8'hFF;
             pf_tag_q            <= '0;
@@ -1979,7 +1993,9 @@ module vtw_core_top (
             // A cached write commits on this same edge, after the lookup
             // read. The entry is then good unless the write is to the
             // byte that was looked up.
-            pf_valid_q      <= core_en && !turbo_invalidate &&
+            pf_is_code_q    <= pf_is_code;
+            pf_valid_q      <= core_en && !turbo_invalidate && turbo_execute &&
+                               !video_sync_active && !video_full_flush &&
                                ((xstate_q == X_TURBO_DONE &&
                                  (cycle_rw_q || cycle_addr_q != pf_lookup_addr)) ||
                                 (xstate_q == X_CAPTURE));

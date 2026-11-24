@@ -42,6 +42,9 @@ module w65c02_core #(
     // This cycle is a read of the byte at PC (debug_pc). A wrapper can use
     // it to accept a byte that it fetched ahead from that address.
     output logic        addr_is_pc,
+    // How PC changed in the last completed cycle: 0 = not at all,
+    // 1 = by one byte, 2 = loaded with another value. Registered.
+    output logic [1:0]  pc_move,
 
     input  logic        debug_load,
     input  logic [15:0] debug_pc_in,
@@ -975,6 +978,12 @@ module w65c02_core #(
     assign addr_is_pc = (state_q == ST_FETCH) || (state_q == ST_OPERAND) ||
                         (state_q == ST_ABS_HI) || (state_q == ST_JSR_LOW);
 
+    localparam logic [1:0] PC_MOVE_SAME = 2'd0;
+    localparam logic [1:0] PC_MOVE_INC  = 2'd1;
+    localparam logic [1:0] PC_MOVE_JUMP = 2'd2;
+    logic [1:0] pc_move_q;
+    assign pc_move = pc_move_q;
+
     assign debug_pc = pc_q;
     assign debug_s  = s_q;
     assign debug_a  = a_q;
@@ -1165,6 +1174,7 @@ module w65c02_core #(
     always_ff @(posedge clk or negedge reset_n) begin
         if (!reset_n) begin
             pc_q <= 16'h0000;
+            pc_move_q <= PC_MOVE_JUMP;
             s_q <= 8'hFF;
             a_q <= 8'h00;
             x_q <= 8'h00;
@@ -1194,6 +1204,7 @@ module w65c02_core #(
             instruction_done <= 1'b0;
         end else if (DEBUG_STATE_LOAD && debug_load) begin
             pc_q <= debug_pc_in;
+            pc_move_q <= PC_MOVE_JUMP;
             s_q <= debug_s_in;
             a_q <= debug_a_in;
             x_q <= debug_x_in;
@@ -1238,6 +1249,7 @@ module w65c02_core #(
             end
 
             if (enable && ready) begin
+                pc_move_q <= PC_MOVE_SAME;
                 case (state_q)
                     ST_RESET_0: state_q <= ST_RESET_1;
                     ST_RESET_1: state_q <= ST_RESET_STACK_0;
@@ -1247,6 +1259,7 @@ module w65c02_core #(
                     ST_RESET_VECTOR_LO: begin lo_q <= data_in; state_q <= ST_RESET_VECTOR_HI; end
                     ST_RESET_VECTOR_HI: begin
                         pc_q <= {data_in, lo_q};
+                        pc_move_q <= PC_MOVE_JUMP;
                         p_q[P_I] <= 1'b1;
                         p_q[P_D] <= 1'b0;
                         state_q <= ST_FETCH;
@@ -1267,6 +1280,7 @@ module w65c02_core #(
                             state_q <= ST_INT_DUMMY;
                         end else begin
                             pc_q <= pc_q + 16'd1;
+                            pc_move_q <= PC_MOVE_INC;
 
                             if (fetch_decode.one_cycle) begin
                                 instruction_done <= 1'b1;
@@ -1331,6 +1345,7 @@ module w65c02_core #(
                     ST_OPERAND: begin
                         operand_q <= data_in;
                         pc_q <= pc_q + 16'd1;
+                        pc_move_q <= PC_MOVE_INC;
 
                         case (mode_q)
                             AM_IMM: begin
@@ -1410,6 +1425,7 @@ module w65c02_core #(
                                     if (turbo_instruction &&
                                         relative_base[15:12] != 4'hC) begin
                                         pc_q <= relative_target;
+                                        pc_move_q <= PC_MOVE_JUMP;
                                         instruction_done <= 1'b1;
                                         state_q <= ST_FETCH;
                                     end else begin
@@ -1433,9 +1449,11 @@ module w65c02_core #(
                     ST_ABS_HI: begin
                         hi_q <= data_in;
                         pc_q <= pc_q + 16'd1;
+                        pc_move_q <= PC_MOVE_INC;
 
                         if (op_q == OP_JMP && mode_q == AM_ABS) begin
                             pc_q <= {data_in, lo_q};
+                            pc_move_q <= PC_MOVE_JUMP;
                             instruction_done <= 1'b1;
                             state_q <= ST_FETCH;
                         end else if (op_q == OP_JMP && mode_q == AM_ABSIND) begin
@@ -1582,12 +1600,14 @@ module w65c02_core #(
                             state_q <= ST_BRANCH_CROSS;
                         else begin
                             pc_q <= target_q;
+                            pc_move_q <= PC_MOVE_JUMP;
                             instruction_done <= 1'b1;
                             state_q <= ST_FETCH;
                         end
                     end
                     ST_BRANCH_CROSS: begin
                         pc_q <= target_q;
+                        pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end
@@ -1599,6 +1619,7 @@ module w65c02_core #(
                     ST_BIT_BRANCH_REPEAT: state_q <= ST_BIT_BRANCH_OFFSET;
                     ST_BIT_BRANCH_OFFSET: begin
                         pc_q <= pc_q + 16'd1;
+                        pc_move_q <= PC_MOVE_INC;
                         target_q <= relative_target;
                         page_cross_q <= relative_base[15:8] != relative_target[15:8];
                         if (((op_q == OP_BBR) && !data_q[ir_q[6:4]]) ||
@@ -1614,12 +1635,14 @@ module w65c02_core #(
                             state_q <= ST_BIT_BRANCH_CROSS;
                         else begin
                             pc_q <= target_q;
+                            pc_move_q <= PC_MOVE_JUMP;
                             instruction_done <= 1'b1;
                             state_q <= ST_FETCH;
                         end
                     end
                     ST_BIT_BRANCH_CROSS: begin
                         pc_q <= target_q;
+                        pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end
@@ -1656,6 +1679,7 @@ module w65c02_core #(
                     ST_JSR_LOW: begin
                         lo_q <= data_in;
                         pc_q <= pc_q + 16'd1;
+                        pc_move_q <= PC_MOVE_INC;
                         // Keep the operand-high read after both writes: a JSR
                         // executing in stack memory can overwrite that byte.
                         state_q <= turbo_instruction ? ST_JSR_PUSH_HI : ST_JSR_STACK_DUMMY;
@@ -1665,6 +1689,7 @@ module w65c02_core #(
                     ST_JSR_PUSH_LO: begin s_q <= s_q - 8'd1; state_q <= ST_JSR_HIGH; end
                     ST_JSR_HIGH: begin
                         pc_q <= {data_in, lo_q};
+                        pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end
@@ -1680,15 +1705,18 @@ module w65c02_core #(
                     ST_RTS_PULL_HI: begin
                         if (turbo_skip_rts_final) begin
                             pc_q <= {data_in, lo_q} + 16'd1;
+                            pc_move_q <= PC_MOVE_JUMP;
                             instruction_done <= 1'b1;
                             state_q <= ST_FETCH;
                         end else begin
                             pc_q <= {data_in, lo_q};
+                            pc_move_q <= PC_MOVE_JUMP;
                             state_q <= ST_RTS_FINAL;
                         end
                     end
                     ST_RTS_FINAL: begin
                         pc_q <= pc_q + 16'd1;
+                        pc_move_q <= PC_MOVE_INC;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end
@@ -1704,12 +1732,14 @@ module w65c02_core #(
                     ST_RTI_PULL_LO: begin lo_q <= data_in; s_q <= s_q + 8'd1; state_q <= ST_RTI_PULL_HI; end
                     ST_RTI_PULL_HI: begin
                         pc_q <= {data_in, lo_q};
+                        pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end
 
                     ST_BRK_SIGNATURE: begin
                         pc_q <= pc_q + 16'd1;
+                        pc_move_q <= PC_MOVE_INC;
                         op_q <= OP_BRK;
                         state_q <= ST_INT_PUSH_HI;
                     end
@@ -1725,6 +1755,7 @@ module w65c02_core #(
                     ST_INT_VECTOR_LO: begin lo_q <= data_in; state_q <= ST_INT_VECTOR_HI; end
                     ST_INT_VECTOR_HI: begin
                         pc_q <= {data_in, lo_q};
+                        pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end
@@ -1733,6 +1764,7 @@ module w65c02_core #(
                     ST_JMP_IND_HI: begin hi_q <= data_in; state_q <= ST_JMP_IND_LAST; end
                     ST_JMP_IND_LAST: begin
                         pc_q <= {data_in, lo_q};
+                        pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end
@@ -1741,6 +1773,7 @@ module w65c02_core #(
                     ST_JMP_X_LO: begin lo_q <= data_in; state_q <= ST_JMP_X_HI; end
                     ST_JMP_X_HI: begin
                         pc_q <= {data_in, lo_q};
+                        pc_move_q <= PC_MOVE_JUMP;
                         instruction_done <= 1'b1;
                         state_q <= ST_FETCH;
                     end

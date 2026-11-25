@@ -45,6 +45,15 @@ module supersprite_card (
     output logic                    irq_n,         // active-low VDP interrupt
     output logic signed [15:0]      ssp_audio,     // AY-3-8910 PSG mono audio
 
+    // ---- AY-3-8910 bus, to and from the shared sound chip bank ----
+    output logic                    psg_bus_ce,
+    output logic                    psg_bus_reset,
+    output logic                    psg_bus_bdir,
+    output logic                    psg_bus_bc,
+    output logic [7:0]              psg_bus_di,
+    input  logic [7:0]              psg_bus_dout,
+    input  logic [7:0]              psg_bus_channel [3],
+
     // ---- PS-facing readback (software renderer) ----
     input  logic [13:0]             ps_vram_addr,
     output logic [7:0]              ps_vram_data,  // registered read of VRAM
@@ -151,23 +160,17 @@ module supersprite_card (
     logic [7:0] psg_dout;
     logic [7:0] psg_ch_a, psg_ch_b, psg_ch_c;
 
-    YM2149 ssp_psg (
-        .CLK(clk),
-        .CE(psg_ce),
-        .RESET(vdp_reset),
-        .BDIR(psg_addr_wr || psg_data_wr),
-        .BC(psg_data_rd || psg_addr_wr),
-        .DI(ab_read.data),
-        .DO(psg_dout),
-        .CHANNEL_A(psg_ch_a),
-        .CHANNEL_B(psg_ch_b),
-        .CHANNEL_C(psg_ch_c),
-        .SEL(1'b0),
-        .MODE(1'b0),
-        .ACTIVE(),
-        .IOA_in(8'h00), .IOA_out(),
-        .IOB_in(8'h00), .IOB_out()
-    );
+    // The chip itself is one slot of the shared sound chip bank
+    // (ym2149_bank in mockingboard.sv); only its bus signals come from here.
+    assign psg_bus_ce    = psg_ce;
+    assign psg_bus_reset = vdp_reset;
+    assign psg_bus_bdir  = psg_addr_wr || psg_data_wr;
+    assign psg_bus_bc    = psg_data_rd || psg_addr_wr;
+    assign psg_bus_di    = ab_read.data;
+    assign psg_dout      = psg_bus_dout;
+    assign psg_ch_a      = psg_bus_channel[0];
+    assign psg_ch_b      = psg_bus_channel[1];
+    assign psg_ch_c      = psg_bus_channel[2];
 
     // Mono sum of the three channels (max 765), left-shifted into the signed
     // 16-bit range with headroom for mixing at the top level.

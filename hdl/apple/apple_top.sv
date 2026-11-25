@@ -1410,6 +1410,14 @@ module apple_top(
     logic physical_data_tick;
     logic signed [15:0] mb1_audio_l;    // mockingboard pre-mix (SS PSG summed in)
     logic signed [15:0] mb1_audio_r;
+    // SuperSprite sound chip bus: the chip is the fifth slot of the bank in mb1.
+    logic       ss_psg_bus_ce;
+    logic       ss_psg_bus_reset;
+    logic       ss_psg_bus_bdir;
+    logic       ss_psg_bus_bc;
+    logic [7:0] ss_psg_bus_di;
+    logic [7:0] ss_psg_bus_dout;
+    logic [7:0] ss_psg_bus_channel [3];
     // SuperSprite PS-facing readback (driven by supersprite_card_i).
     logic [63:0] ss_regs;
     logic [7:0]  ss_status;
@@ -1654,7 +1662,14 @@ module apple_top(
         .audio_r(mb1_audio_r),
         .dbg_ssi_irq(mb1_dbg_ssi_irq),
         .dbg_ssi_backend_done(mb1_dbg_ssi_backend_done),
-        .dbg_ssi_enable_ints(mb1_dbg_ssi_enable_ints)
+        .dbg_ssi_enable_ints(mb1_dbg_ssi_enable_ints),
+        .guest_psg_ce(ss_psg_bus_ce),
+        .guest_psg_reset(ss_psg_bus_reset),
+        .guest_psg_bdir(ss_psg_bus_bdir),
+        .guest_psg_bc(ss_psg_bus_bc),
+        .guest_psg_di(ss_psg_bus_di),
+        .guest_psg_dout(ss_psg_bus_dout),
+        .guest_psg_channel(ss_psg_bus_channel)
     );
 
     // Mute a disabled Phasor and register the saturated SuperSprite/Phasor
@@ -1915,6 +1930,13 @@ module apple_top(
         .ab_write(supersprite_ab_write),
         .irq_n(),                       // aggregated via ab_write.assert_irq
         .ssp_audio(ss_psg_audio),
+        .psg_bus_ce(ss_psg_bus_ce),
+        .psg_bus_reset(ss_psg_bus_reset),
+        .psg_bus_bdir(ss_psg_bus_bdir),
+        .psg_bus_bc(ss_psg_bus_bc),
+        .psg_bus_di(ss_psg_bus_di),
+        .psg_bus_dout(ss_psg_bus_dout),
+        .psg_bus_channel(ss_psg_bus_channel),
         .ps_vram_addr(ss_vram_addr_q),
         .ps_vram_data(ss_vram_data),
         .ps_regs(ss_regs),

@@ -32,7 +32,15 @@ module mockingboard(
     // combined across both SSI-263 voices.
     output logic dbg_ssi_irq,
     output logic dbg_ssi_backend_done,
-    output logic dbg_ssi_enable_ints
+    output logic dbg_ssi_enable_ints,
+    // Fifth slot of the sound chip bank, for the SuperSprite card.
+    input  logic       guest_psg_ce = 1'b0,
+    input  logic       guest_psg_reset = 1'b1,
+    input  logic       guest_psg_bdir = 1'b0,
+    input  logic       guest_psg_bc = 1'b0,
+    input  logic [7:0] guest_psg_di = 8'h00,
+    output logic [7:0] guest_psg_dout,
+    output logic [7:0] guest_psg_channel [3]
 );
 
 localparam logic [2:0] PH_MOCKINGBOARD = 3'd0;
@@ -444,23 +452,31 @@ ssi263_stereo_mixer ssi_mixer_i (
     .speech_l(ssi_mix_l), .speech_r(ssi_mix_r), .mix_valid()
 );
 
-// The four sound chips share one copy of the chip logic.
-ym2149_bank #(.N(4)) psg_bank_i (
+// The four sound chips, and the one of the SuperSprite card, share one copy
+// of the chip logic.
+ym2149_bank #(.N(5)) psg_bank_i (
     .clk(clk),
-    .ce({4{psg_clock}}),
-    .reset({via_reset || !via1_portb_bus[2], via_reset || !via0_portb_bus[2],
+    .ce({guest_psg_ce, {4{psg_clock}}}),
+    .reset({guest_psg_reset,
+            via_reset || !via1_portb_bus[2], via_reset || !via0_portb_bus[2],
             via_reset || !via1_portb_bus[2], via_reset || !via0_portb_bus[2]}),
-    .bdir({via1_ay1_drive && via1_portb_bus[1], via0_ay1_drive && via0_portb_bus[1],
+    .bdir({guest_psg_bdir,
+           via1_ay1_drive && via1_portb_bus[1], via0_ay1_drive && via0_portb_bus[1],
            via1_ay0_drive && via1_portb_bus[1], via0_ay0_drive && via0_portb_bus[1]}),
-    .bc({via1_ay1_drive && via1_portb_bus[0], via0_ay1_drive && via0_portb_bus[0],
+    .bc({guest_psg_bc,
+         via1_ay1_drive && via1_portb_bus[0], via0_ay1_drive && via0_portb_bus[0],
          via1_ay0_drive && via1_portb_bus[0], via0_ay0_drive && via0_portb_bus[0]}),
-    .mode({4{psg_volume_mode_ay8913}}),
-    .di('{via0_porta_out, via1_porta_out, via0_porta_out, via1_porta_out}),
-    .dout('{psg0_data_out, psg1_data_out, psg2_data_out, psg3_data_out}),
+    .mode({1'b0, {4{psg_volume_mode_ay8913}}}),
+    .di('{via0_porta_out, via1_porta_out, via0_porta_out, via1_porta_out,
+          guest_psg_di}),
+    .dout('{psg0_data_out, psg1_data_out, psg2_data_out, psg3_data_out,
+            guest_psg_dout}),
     .channel('{psg0_chan_a, psg0_chan_b, psg0_chan_c,
                psg1_chan_a, psg1_chan_b, psg1_chan_c,
                psg2_chan_a, psg2_chan_b, psg2_chan_c,
-               psg3_chan_a, psg3_chan_b, psg3_chan_c})
+               psg3_chan_a, psg3_chan_b, psg3_chan_c,
+               guest_psg_channel[0], guest_psg_channel[1],
+               guest_psg_channel[2]})
 );
 
 mockingboard_audio_mix audio_mix_i (

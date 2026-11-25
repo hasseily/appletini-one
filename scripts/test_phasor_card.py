@@ -89,11 +89,11 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
     via = read(VIA6522_V)
 
     bank = read(YM2149_SV.with_name("ym2149_bank.sv"))
-    require("ym2149_bank #(.N(4)) psg_bank_i (" in source and
+    require("ym2149_bank #(.N(5)) psg_bank_i (" in source and
             "YM2149 psg" not in source,
             "Phasor card must hold four AY/YM PSG cores in one shared bank")
     require("wire psg_volume_mode_ay8913 = audio_control[25];" in source and
-            ".mode({4{psg_volume_mode_ay8913}})," in source and
+            ".mode({1'b0, {4{psg_volume_mode_ay8913}}})," in source and
             "level_index[i][5] = mode[slot_q];" in bank and
             "vol_table[32] = 8'h00;" in bank and
             "vol_table[62] = 8'hff;" in bank and

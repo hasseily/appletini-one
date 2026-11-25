@@ -103,8 +103,15 @@ def test_pl_status_irq_and_switches() -> None:
 
 def test_pl_psg_audio() -> None:
     s = read(SUPERSPRITE_SV)
-    require("YM2149 ssp_psg (" in s,
-            "SuperSprite must instantiate the AY-3-8910 (YM2149) PSG")
+    mb = read(SUPERSPRITE_SV.with_name("mockingboard.sv"))
+    top = read(SUPERSPRITE_SV.with_name("apple_top.sv"))
+    require("YM2149 ssp_psg (" not in s and
+            "assign psg_bus_bdir  = psg_addr_wr || psg_data_wr;" in s and
+            "assign psg_bus_bc    = psg_data_rd || psg_addr_wr;" in s and
+            "ym2149_bank #(.N(5)) psg_bank_i (" in mb and
+            ".guest_psg_dout(ss_psg_bus_dout)," in top and
+            ".psg_bus_dout(ss_psg_bus_dout)," in top,
+            "SuperSprite AY-3-8910 must be the fifth slot of the shared PSG bank")
     require("off[3:2] == 2'b11" in s and "addr_psg" in s,
             "PSG decodes the $C0nC..$C0nF sound registers")
     require("ssp_audio" in s and "psg_ch_a" in s,

@@ -1467,6 +1467,13 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(4)));
     uart_puts(uart_base, line);
     snprintf(line, sizeof(line),
+             "vtw: diag qwaits=%lu qmaxclk=%lu drainmaxclk=%lu records=%lu\r\n",
+             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(5)),
+             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(6)),
+             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(7)),
+             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(8)));
+    uart_puts(uart_base, line);
+    snprintf(line, sizeof(line),
              "vtw: qfill=%lu qhw=%lu qdrop=%lu sessions=%lu\r\n",
              (unsigned long)(post & 0x3FFU),
              (unsigned long)((post >> 16) & 0x3FFU),

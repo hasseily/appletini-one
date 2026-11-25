@@ -590,6 +590,10 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG2 = 8'hBB;  // clocks with the record queue full
     localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG3 = 8'hBC;  // ARM holds
     localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG4 = 8'hBD;  // clocks in an ARM hold
+    localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG5 = 8'hBE;  // waits for the record queue
+    localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG6 = 8'hBF;  // longest of those waits, clocks
+    localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG7 = 8'hC0;  // longest drain, clocks
+    localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG8 = 8'hC1;  // video records to the renderer
     localparam logic [7:0] CARD_CTRL_REG_VTW_JOYSTICK_PADDLES = 8'hAB;
     localparam logic [7:0] CARD_CTRL_REG_VTW_JOYSTICK_CONTROL = 8'hAC;
     localparam logic [7:0] CARD_CTRL_REG_SLOT2_CONTROL = 8'hAD;
@@ -2227,7 +2231,7 @@ module apple_top(
     logic        vtw_sh_word_we;
     logic [31:0] vtw_sh_wdata32;
     logic [287:0] vtw_turbo_perf;
-    logic [159:0] vtw_video_diag;
+    logic [287:0] vtw_video_diag;
     logic [7:0]  vtw_sh_rdata_q;
     logic        vtw_sh_port_en;
     logic        vtw_sh_port_we;
@@ -3426,6 +3430,10 @@ module apple_top(
                 CARD_CTRL_REG_VIDEO_DIAG2: as_client_rdata_q <= vtw_video_diag[95:64];
                 CARD_CTRL_REG_VIDEO_DIAG3: as_client_rdata_q <= vtw_video_diag[127:96];
                 CARD_CTRL_REG_VIDEO_DIAG4: as_client_rdata_q <= vtw_video_diag[159:128];
+                CARD_CTRL_REG_VIDEO_DIAG5: as_client_rdata_q <= vtw_video_diag[191:160];
+                CARD_CTRL_REG_VIDEO_DIAG6: as_client_rdata_q <= vtw_video_diag[223:192];
+                CARD_CTRL_REG_VIDEO_DIAG7: as_client_rdata_q <= vtw_video_diag[255:224];
+                CARD_CTRL_REG_VIDEO_DIAG8: as_client_rdata_q <= vtw_video_diag[287:256];
                 CARD_CTRL_REG_VTW_JOYSTICK_PADDLES,
                 CARD_CTRL_REG_VTW_JOYSTICK_CONTROL:
                     as_client_rdata_q <= vtw_joystick_ps_rdata;

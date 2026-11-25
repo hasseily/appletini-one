@@ -310,8 +310,11 @@ module vtw_core_top (
     // Diagnostic counters of the video path and the ARM hold:
     // [31:0] full video drains, [63:32] clocks in a drain, [95:64] clocks
     // the CPU waited because the record queue to the ARM was full,
-    // [127:96] ARM holds, [159:128] clocks in an ARM hold.
-    output logic [159:0]            video_diag
+    // [127:96] ARM holds, [159:128] clocks in an ARM hold,
+    // [191:160] waits for the record queue (number), [223:192] the longest
+    // of those waits in clocks, [255:224] the longest drain in clocks,
+    // [287:256] video records sent to the renderer.
+    output logic [287:0]            video_diag
 );
 
     import globals::*;
@@ -1864,6 +1867,49 @@ module vtw_core_top (
     for (genvar n = 0; n < 5; n++) begin : diag_readback
         assign video_diag[32*n +: 32] = diag_count[n];
     end
+
+    // Number and longest length of the waits: totals cannot tell a few long
+    // waits from many short ones.
+    logic        diag_qfull_q, diag_record_q;
+    logic [31:0] diag_qfull_events, diag_qfull_run, diag_qfull_max;
+    logic [31:0] diag_drain_run, diag_drain_max, diag_records;
+    always_ff @(posedge clk) begin
+        if (!rstn || dbg_clear) begin
+            diag_qfull_q <= 1'b0;
+            diag_record_q <= 1'b0;
+            diag_qfull_events <= '0;
+            diag_qfull_run <= '0;
+            diag_qfull_max <= '0;
+            diag_drain_run <= '0;
+            diag_drain_max <= '0;
+            diag_records <= '0;
+        end else begin
+            diag_qfull_q <= diag_events_q[2];
+            diag_record_q <= video_record_valid && video_record_ready;
+            if (diag_events_q[2]) begin
+                diag_qfull_run <= diag_qfull_run + 32'd1;
+                if (!diag_qfull_q)
+                    diag_qfull_events <= diag_qfull_events + 32'd1;
+            end else begin
+                diag_qfull_run <= '0;
+                if (diag_qfull_run > diag_qfull_max)
+                    diag_qfull_max <= diag_qfull_run;
+            end
+            if (diag_events_q[1]) begin
+                diag_drain_run <= diag_drain_run + 32'd1;
+            end else begin
+                diag_drain_run <= '0;
+                if (diag_drain_run > diag_drain_max)
+                    diag_drain_max <= diag_drain_run;
+            end
+            if (diag_record_q)
+                diag_records <= diag_records + 32'd1;
+        end
+    end
+    assign video_diag[191:160] = diag_qfull_events;
+    assign video_diag[223:192] = diag_qfull_max;
+    assign video_diag[255:224] = diag_drain_max;
+    assign video_diag[287:256] = diag_records;
 
     always_ff @(posedge clk) begin
         if (!rstn) begin

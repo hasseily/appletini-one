@@ -330,7 +330,9 @@
 #define CARD_CTRL_TURBO_PREFETCH_REG            CARD_CTRL_REG_ADDR(0xB8U)
 /* Diagnostic counters, 32 bits each: 0 full video drains, 1 clocks in a
  * drain, 2 clocks the CPU waited for the record queue, 3 ARM holds,
- * 4 clocks in an ARM hold. A fabric clock is 7.5 ns. */
+ * 4 clocks in an ARM hold, 5 number of waits for the record queue,
+ * 6 the longest of those waits (clocks), 7 the longest drain (clocks),
+ * 8 video records sent to the renderer. A fabric clock is 7.5 ns. */
 #define CARD_CTRL_VIDEO_DIAG_REG(n)             CARD_CTRL_REG_ADDR(0xB9U + (n))
 /* USB joystick override for vTW on a physical Apple II. PADDLES stages
  * PDL0..3 in bits 7:0 through 31:24. A CONTROL write with byte 0 enabled

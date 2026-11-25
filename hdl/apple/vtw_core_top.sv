@@ -306,7 +306,12 @@ module vtw_core_top (
     output logic [16*32-1:0]        dbg_io_trace,
     output logic [31:0]             dbg_trace_status,
     output logic [31:0]             dbg_bus_faults,
-    output logic [287:0]            turbo_perf
+    output logic [287:0]            turbo_perf,
+    // Diagnostic counters of the video path and the ARM hold:
+    // [31:0] full video drains, [63:32] clocks in a drain, [95:64] clocks
+    // the CPU waited because the record queue to the ARM was full,
+    // [127:96] ARM holds, [159:128] clocks in an ARM hold.
+    output logic [159:0]            video_diag
 );
 
     import globals::*;
@@ -1827,6 +1832,37 @@ module vtw_core_top (
     end
     for (genvar n = 0; n < 9; n++) begin : perf_readback
         assign turbo_perf[32*n +: 32] = perf_count[n];
+    end
+
+    // Registered predicates, as for the counters above.
+    logic [4:0]  diag_events_q;
+    logic        diag_sync_q, diag_hold_q;
+    logic [31:0] diag_count [0:4];
+    always_ff @(posedge clk) begin
+        if (!rstn || dbg_clear) begin
+            diag_events_q <= '0;
+            diag_sync_q <= 1'b0;
+            diag_hold_q <= 1'b0;
+            for (int n = 0; n < 5; n++) diag_count[n] <= '0;
+        end else begin
+            diag_sync_q <= video_sync_active;
+            diag_hold_q <= rw_hold_q;
+            diag_events_q <= {
+                rw_hold_q,
+                rw_hold_q && !diag_hold_q,
+                core_active && video_selected && (xstate_q == X_POST_STALL) &&
+                    !video_record_ready,
+                video_sync_active,
+                video_sync_active && !diag_sync_q
+            };
+            for (int n = 0; n < 5; n++) begin
+                if (diag_events_q[n])
+                    diag_count[n] <= diag_count[n] + 32'd1;
+            end
+        end
+    end
+    for (genvar n = 0; n < 5; n++) begin : diag_readback
+        assign video_diag[32*n +: 32] = diag_count[n];
     end
 
     always_ff @(posedge clk) begin

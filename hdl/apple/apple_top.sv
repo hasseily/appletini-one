@@ -585,6 +585,11 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF6 = 8'hA9;
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF7 = 8'hAA;
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF8 = 8'hB8;  // prefetched completions
+    localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG0 = 8'hB9;  // full video drains
+    localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG1 = 8'hBA;  // clocks in a drain
+    localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG2 = 8'hBB;  // clocks with the record queue full
+    localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG3 = 8'hBC;  // ARM holds
+    localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG4 = 8'hBD;  // clocks in an ARM hold
     localparam logic [7:0] CARD_CTRL_REG_VTW_JOYSTICK_PADDLES = 8'hAB;
     localparam logic [7:0] CARD_CTRL_REG_VTW_JOYSTICK_CONTROL = 8'hAC;
     localparam logic [7:0] CARD_CTRL_REG_SLOT2_CONTROL = 8'hAD;
@@ -2222,6 +2227,7 @@ module apple_top(
     logic        vtw_sh_word_we;
     logic [31:0] vtw_sh_wdata32;
     logic [287:0] vtw_turbo_perf;
+    logic [159:0] vtw_video_diag;
     logic [7:0]  vtw_sh_rdata_q;
     logic        vtw_sh_port_en;
     logic        vtw_sh_port_we;
@@ -2604,6 +2610,7 @@ module apple_top(
         .sh_word_we(vtw_copy_busy ? vtw_copy_sh_word_we : vtw_sh_word_we),
         .sh_wdata32(vtw_copy_busy ? vtw_copy_sh_wdata : vtw_sh_wdata32),
         .turbo_perf(vtw_turbo_perf),
+        .video_diag(vtw_video_diag),
         .arm_req_valid(vtw_arm_go_pulse_q),
         .arm_req_addr(vtw_arm_addr_q),
         .arm_req_rw(vtw_arm_rw_q),
@@ -3414,6 +3421,11 @@ module apple_top(
                 CARD_CTRL_REG_TURBO_PERF6: as_client_rdata_q <= vtw_turbo_perf[223:192];
                 CARD_CTRL_REG_TURBO_PERF7: as_client_rdata_q <= vtw_turbo_perf[255:224];
                 CARD_CTRL_REG_TURBO_PERF8: as_client_rdata_q <= vtw_turbo_perf[287:256];
+                CARD_CTRL_REG_VIDEO_DIAG0: as_client_rdata_q <= vtw_video_diag[31:0];
+                CARD_CTRL_REG_VIDEO_DIAG1: as_client_rdata_q <= vtw_video_diag[63:32];
+                CARD_CTRL_REG_VIDEO_DIAG2: as_client_rdata_q <= vtw_video_diag[95:64];
+                CARD_CTRL_REG_VIDEO_DIAG3: as_client_rdata_q <= vtw_video_diag[127:96];
+                CARD_CTRL_REG_VIDEO_DIAG4: as_client_rdata_q <= vtw_video_diag[159:128];
                 CARD_CTRL_REG_VTW_JOYSTICK_PADDLES,
                 CARD_CTRL_REG_VTW_JOYSTICK_CONTROL:
                     as_client_rdata_q <= vtw_joystick_ps_rdata;

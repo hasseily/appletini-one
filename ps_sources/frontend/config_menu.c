@@ -304,6 +304,7 @@ static const char * const k_about_third_party[] = {
     "AD8088 Reboot Camp '83 - Seth Kushniryk",
     "The MAME Project - MAME emulator by Nicola Salmoria and others",
     "The MiSTer Project - MiSTer FPGA by Sorgelig and others",
+    "FPGA advisory - Phillip Allison of UltimateApple2",
     "And in no particular order:",
     "  Peter Ferrie, John Brooks, fenarinarsa, Jansky, the Paris a2cp, Baz,",
     "  fatdog, 4am, arekkusu, Infinitum, the Apple II discords and so many more..."

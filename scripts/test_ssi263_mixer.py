@@ -14,7 +14,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / "build/test_ssi263_mixer"
 RTL = ROOT / "hdl/apple/ssi263_stereo_mixer.sv"
-CARD = ROOT / "hdl/apple/mockingboard.sv"
+CARD = ROOT / "hdl/apple/mockingboard_audio_mix.sv"
 BENCH = ROOT / "scripts/fixtures/ssi263_native/mixer_tb.sv"
 HARNESS = ROOT / "scripts/fixtures/ssi263_native/mixer_compare.cpp"
 

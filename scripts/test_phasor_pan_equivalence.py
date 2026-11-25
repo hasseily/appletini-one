@@ -20,7 +20,7 @@ def extract_function(source: str, name: str) -> str:
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     functions = [REFERENCE.read_text()]
-    for file, name in (("mockingboard.sv", "apply_pan_gain"),
+    for file, name in (("mockingboard_audio_mix.sv", "apply_pan_gain"),
                        ("ssi263_stereo_mixer.sv", "pan_coefficient")):
         path = f"hdl/apple/{file}"
         functions.append(extract_function((ROOT / path).read_text(), name))

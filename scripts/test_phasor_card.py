@@ -146,36 +146,38 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             source.count(".slow_clock(via_timer_clock)") == 2 and
             source.count(".timer_read_extra_clock(phasor_timer_read_extra_clock)") == 2,
             "Phasor must keep PSG/register strobes on data_en while ticking VIA timers at the read-data setup phase")
-    require("mix4_to_wide = $signed({1'b0, value, 4'b0000});" in source and
-            "input signed [17:0] speech" in source and
-            "logic signed [18:0] combined;" in source,
+    # The output chain is its own module. Left and right share one copy of
+    # the arithmetic on alternate fabric clocks.
+    mix = read(MOCKINGBOARD_SV.with_name("mockingboard_audio_mix.sv"))
+    require("mockingboard_audio_mix audio_mix_i (" in source and
+            ".channel('{psg0_chan_a, psg0_chan_b, psg0_chan_c," in source and
+            "psg3_chan_a, psg3_chan_b, psg3_chan_c})," in source,
+            "the card must give its twelve PSG channels to the shared output chain")
+    require("mix4_to_wide = $signed({1'b0, value, 4'b0000});" in mix and
+            "input signed [17:0] speech" in mix and
+            "logic signed [18:0] combined;" in mix and
+            "wire signed [18:0] base_sum =" in mix,
             "AY scale must stay fixed and the complete SSI/AY sum must fit before clipping")
-    require("if (phasor_native) begin\n"
-            "                base_l_next = mix_speech(" in source and
-            "mix4_to_wide(psg_phasor_l_mix_q),\n"
-            "                    ssi_mix_l);" in source and
-            "mix4_to_wide(psg_phasor_r_mix_q),\n"
-            "                    ssi_mix_r);" in source and
-            "speech_audio_q" not in source and
-            "psg_phasor_l_mix_q <= sum4_10(psg0_l_sum_q," in source and
-            "mix4_to_wide(psg_phasor_l_mix_q)" in source and
-            "end else if (echo_plus) begin\n"
-            "                base_l_next = mix_speech(" in source and
-            "psg_echo_l_mix_q <= sum2_10(psg1_l_sum_q, psg3_l_sum_q);" in source and
-            "mix2_to_wide(psg_echo_l_mix_q)" in source and
-            "psg_mockingboard_l_mix_q <= sum2_10(psg0_l_sum_q, psg1_l_sum_q);" in source and
-            "mix2_to_wide(psg_mockingboard_l_mix_q)" in source and
-            "tone_bass_adjust_l_q <= audio_control_adjust(tone_bass_l_q, tone_bass_control_q);" in source and
-            "tone_mid_adjust_l_q <= audio_control_adjust(tone_mid_l_q, tone_mid_control_q);" in source and
-            "tone_volume_adjust_l_q <= audio_control_adjust(tone_apply_base_l_q, tone_volume_control_q);" in source and
-            "tone_warm_adjust_l_q <= audio_control_adjust(tone_warm_l_q, tone_warm_control_q);" in source and
-            "tone_warm_treble_adjust_l_q <= warmth_treble_adjust(tone_treble_l_q, tone_warm_control_q);" in source and
-            "4'd1:    adjusted = widened >>> 3;" in source and
-            "default: adjusted = widened;" in source and
-            "bass_audio_control_adjust" not in source and
-            "tone_shaped_l_q <= tone_base_ext_l_q +" in source and
-            "tone_warm_shaped_l_q <= warm_shape_from21(tone_shaped_l_q, tone_warm_control_q);" in source and
-            "audio_l <= sat16_from21(tone_warm_shaped_l_q);" in source,
+    require("phasor_native ? mix4_to_wide(phasor_mix_q) :" in mix and
+            "echo_plus     ? mix2_to_wide(echo_mix_q) :" in mix and
+            "mix2_to_wide(mockingboard_mix_q);" in mix and
+            "wire signed [17:0] side_speech = side_q ? ssi_mix_l : ssi_mix_r;" in mix and
+            "speech_audio_q" not in source and "speech_audio_q" not in mix and
+            "phasor_mix_q <= sum4_10(sum_q[0], sum_q[1], sum_q[2], sum_q[3]);" in mix and
+            "echo_mix_q <= sum2_10(sum_q[1], sum_q[3]);" in mix and
+            "mockingboard_mix_q <= sum2_10(sum_q[0], sum_q[1]);" in mix and
+            "tone_bass_adjust_q <= audio_control_adjust(tone_bass_q, tone_bass_control_q);" in mix and
+            "tone_mid_adjust_q <= audio_control_adjust(tone_mid_q, tone_mid_control_q);" in mix and
+            "tone_volume_adjust_q <= audio_control_adjust(tone_apply_base_q, tone_volume_control_q);" in mix and
+            "tone_warm_adjust_q <= audio_control_adjust(tone_warm_q, tone_warm_control_q);" in mix and
+            "tone_warm_treble_adjust_q <= warmth_treble_adjust(tone_treble_q, tone_warm_control_q);" in mix and
+            "4'd1:    adjusted = widened >>> 3;" in mix and
+            "default: adjusted = widened;" in mix and
+            "bass_audio_control_adjust" not in mix and
+            "tone_shaped_q <= tone_base_ext_q +" in mix and
+            "tone_warm_shaped_q <= warm_shape_from21(tone_shaped_q, tone_warm_control_q);" in mix and
+            "audio_r <= sat16_from21(tone_warm_shaped_q);" in mix and
+            "audio_l <= sat16_from21(tone_warm_shaped_q);" in mix,
             "native Phasor must mix four AYs while Echo+ must not leak disabled VIA0 audio")
 
 
@@ -556,11 +558,11 @@ def test_phasor_pan_registers_and_menu_schema() -> None:
             "REG_WRITE(CARD_CTRL_PHASOR_PAN_HI_REG, pan_hi);" in frontend_main and
             "REG_WRITE(CARD_CTRL_PHASOR_AUDIO_REG, packed);" in frontend_main,
             "frontend must write Phasor pan and audio-control registers")
-    require("tone_bass_control_q <= clamp_audio_control(audio_control[4:0]);" in mockingboard and
-            "tone_mid_control_q <= clamp_audio_control(audio_control[9:5]);" in mockingboard and
-            "tone_treble_control_q <= clamp_audio_control(audio_control[14:10]);" in mockingboard and
-            "tone_warm_control_q <= clamp_audio_control(audio_control[19:15]);" in mockingboard and
-            "tone_volume_control_q <= clamp_audio_control(audio_control[24:20]);" in mockingboard,
+    require("tone_bass_control_q <= clamp_audio_control(audio_control[4:0]);" in read(MOCKINGBOARD_SV.with_name("mockingboard_audio_mix.sv")) and
+            "tone_mid_control_q <= clamp_audio_control(audio_control[9:5]);" in read(MOCKINGBOARD_SV.with_name("mockingboard_audio_mix.sv")) and
+            "tone_treble_control_q <= clamp_audio_control(audio_control[14:10]);" in read(MOCKINGBOARD_SV.with_name("mockingboard_audio_mix.sv")) and
+            "tone_warm_control_q <= clamp_audio_control(audio_control[19:15]);" in read(MOCKINGBOARD_SV.with_name("mockingboard_audio_mix.sv")) and
+            "tone_volume_control_q <= clamp_audio_control(audio_control[24:20]);" in read(MOCKINGBOARD_SV.with_name("mockingboard_audio_mix.sv")),
             "PL must decode five packed signed 5-bit Phasor audio controls")
     require("PHASOR_AUDIO_RESET               = 32'h0204_0000" in top and
             "bit 25 selects PSG volume table (0=YM, 1=AY)." in top and
@@ -641,7 +643,8 @@ def test_phasor_is_apple_bus_driven() -> None:
             "Phasor RTL and registers must not expose a PS audio-control path")
     require(".apple_res(ab_read.res)" in mockingboard and
             "psg_ce_extra_q <= phasor_native && via_bus_clock;" in mockingboard and
-            "if (phasor_native) begin" in mockingboard,
+            "phasor_native ? mix4_to_wide(phasor_mix_q) :" in
+            read(MOCKINGBOARD_SV.with_name("mockingboard_audio_mix.sv")),
             "normal Apple-driven Phasor reset, clock, and mix paths must remain direct")
 
 

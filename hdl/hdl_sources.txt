@@ -56,6 +56,7 @@ apple/ssi263_sc02_rom.mem
 apple/disk2_sound_pkg.sv
 apple/ssi263_bus_wrapper.sv
 apple/ssi263_voice.sv
+apple/mockingboard_audio_mix.sv
 apple/mockingboard.sv
 apple/disk2_sound_player.sv
 apple/mouse_card.sv

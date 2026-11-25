@@ -413,7 +413,10 @@ module tb_vtw_copy_engine;
         verify_memory();
         sticky();
 
-        label = "permit loss before a shadow write";
+        // The engine uses the permit one clock late: the write of the clock
+        // in which the permit drops completes, and no write after it. The
+        // count is the number of bytes written.
+        label = "permit loss in a shadow write clock";
         fixture();
         launch('h1000, 'h11000, 40, 1'b0);
         while (!(sh_en && sh_we)) tick();
@@ -421,7 +424,21 @@ module tb_vtw_copy_engine;
         tick();
         permit = 1'b1;
         wait_done();
-        check(aborted && completed == 0 && sh_writes == 0, "permit loss allowed shadow write");
+        check(aborted && completed == 4 && sh_writes == 1,
+              "permit loss did not stop after the one write in progress");
+        verify_memory();
+        sticky();
+
+        // An abort request from the ARM still stops the write of its clock.
+        label = "abort in a shadow write clock";
+        fixture();
+        launch('h1000, 'h11000, 40, 1'b0);
+        while (!(sh_en && sh_we)) tick();
+        abort_req = 1'b1;
+        tick();
+        abort_req = 1'b0;
+        wait_done();
+        check(aborted && completed == 0 && sh_writes == 0, "abort allowed shadow write");
         verify_memory();
         sticky();
 

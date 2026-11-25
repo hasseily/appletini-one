@@ -43,7 +43,15 @@ module vtw_copy_engine (
     logic [63:0] source_data_q, dest_data_q;
     logic [3:0] dirty_bytes_q;
     logic cancel_q;
-    wire cancelled = cancel_q || abort_req || !permit;
+    /* The permit comes from the mode and ownership flags of the card. A
+     * running copy uses it one clock late, from a register, so that those
+     * flags are not in the path to the RAM write enables. The state, the
+     * byte count and the writes all use this same registered value, so the
+     * count is always the number of bytes written. After a permit loss one
+     * more access can complete (4 shadow bytes, or one PSRAM line). An
+     * abort request from the ARM still acts in the same clock. */
+    logic permit_q;
+    wire cancelled = cancel_q || abort_req || !permit_q;
     wire source_shadow = src_q < 24'h020000;
     wire dest_shadow = dst_q < 24'h020000;
 
@@ -83,7 +91,9 @@ module vtw_copy_engine (
             dirty_bytes_q <= '0;
             cancel_q <= 1'b0;
             op_q <= LOAD_SOURCE;
+            permit_q <= 1'b0;
         end else begin
+            permit_q <= permit;
             if (state_q == IDLE) begin
                 if (start) begin
                     src_q <= source;

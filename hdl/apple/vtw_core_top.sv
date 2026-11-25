@@ -1222,7 +1222,17 @@ module vtw_core_top (
     // RamWorks bank became 8 bits, and 80STORE changes then left stale
     // bytes in the cache (F1.3.11dev1 to dev3).
     TranslateState turbo_mapping;
-    assign turbo_mapping = translate_state_from_sss(vsss);
+    // INTCXROM, SLOTC3ROM and the INTC8ROM latch act only on $C100-$CFFF,
+    // and no Cxxx byte is ever in the caches. A change of these three is
+    // not a change of any cached mapping. Firmware calls (80 columns,
+    // mouse, SmartPort) change them all the time; a flush for each change
+    // cost Doom one flush in 188 CPU steps.
+    always_comb begin
+        turbo_mapping = translate_state_from_sss(vsss);
+        turbo_mapping.sw_intcxrom     = 1'b0;
+        turbo_mapping.sw_slotc3rom    = 1'b0;
+        turbo_mapping.c8_internal_rom = 1'b0;
+    end
     always_ff @(posedge clk) begin
         if (!rstn) begin
             turbo_mode_q <= SPEED_FULL;

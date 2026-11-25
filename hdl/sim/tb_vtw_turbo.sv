@@ -285,6 +285,13 @@ module tb_vtw_turbo;
     logic physical_request_pending = 1'b0;
     logic [15:0] physical_request_address;
 
+    integer invalidate_edges = 0;
+    logic invalidate_last = 1'b0;
+    always @(posedge clk) begin
+        if (dut.turbo_invalidate && !invalidate_last) invalidate_edges++;
+        invalidate_last <= dut.turbo_invalidate;
+    end
+
     task automatic check(input bit condition, input string message);
         if (!condition)
             $fatal(1, "VTW TURBO FAIL: %s", message);
@@ -990,6 +997,31 @@ module tb_vtw_turbo;
         pause = 1'b0;
         wait_marker(0, n + 4);
         check(marker_value[0] == 8'h83, "ARM code write left a stale instruction operand");
+        freeze_core();
+    endtask
+
+    // INTCXROM changes do not act on cached memory, so they must not
+    // empty the caches. Firmware calls change this switch all the time.
+    task automatic intcxrom_program;
+        integer flushes;
+        begin_program(2'd3);
+        absolute(8'h4C, 16'h6000);
+        sh_write(18'h06100, 8'h5A);
+        // LDA $6100 / STA $A100 / STA $C007 / LDA $6100 / STA $A100 /
+        // STA $C006 / JMP $6000.
+        sh_write(18'h06000, 8'hAD); sh_write(18'h06001, 8'h00); sh_write(18'h06002, 8'h61);
+        sh_write(18'h06003, 8'h8D); sh_write(18'h06004, 8'h00); sh_write(18'h06005, 8'hA1);
+        sh_write(18'h06006, 8'h8D); sh_write(18'h06007, 8'h07); sh_write(18'h06008, 8'hC0);
+        sh_write(18'h06009, 8'hAD); sh_write(18'h0600A, 8'h00); sh_write(18'h0600B, 8'h61);
+        sh_write(18'h0600C, 8'h8D); sh_write(18'h0600D, 8'h00); sh_write(18'h0600E, 8'hA1);
+        sh_write(18'h0600F, 8'h8D); sh_write(18'h06010, 8'h06); sh_write(18'h06011, 8'hC0);
+        sh_write(18'h06012, 8'h4C); sh_write(18'h06013, 8'h00); sh_write(18'h06014, 8'h60);
+        start_program();
+        wait_marker(0, 4);
+        flushes = invalidate_edges;
+        wait_marker(0, 24);
+        check(marker_value[0] == 8'h5A, "RAM read was wrong after an INTCXROM change");
+        check(invalidate_edges == flushes, "an INTCXROM change emptied the TURBO cache");
         freeze_core();
     endtask
 
@@ -1822,6 +1854,7 @@ module tb_vtw_turbo;
         bank_program();
         ramworks_program();
         selfmod_program();
+        intcxrom_program();
         physical_program();
         for (int kind = 0; kind < 9; kind++)
             direct_video_admission(kind);

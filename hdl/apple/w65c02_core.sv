@@ -21,6 +21,15 @@ module w65c02_core #(
     // Optional relaxed instruction timing. An omitted/unknown input keeps
     // the cycle-exact path. Enable only for instructions in untimed memory.
     input  logic        turbo,
+    // Code bytes after the opcode, which a wrapper has read ahead:
+    // ahead_data[7:0] is the byte at PC+1 (good with ahead_valid[0]) and
+    // ahead_data[15:8] the byte at PC+2 (good with ahead_valid[1]). Offer
+    // only bytes of untimed memory. A TURBO opcode fetch then does the
+    // operand cycles in the same step. fused_bytes gives the number of
+    // operand bytes that this step takes.
+    input  logic [1:0]  ahead_valid = 2'b00,
+    input  logic [15:0] ahead_data = 16'h0000,
+    output wire  [1:0]  fused_bytes,
 
     input  logic        irq_n,
     input  logic        nmi_n,
@@ -43,7 +52,8 @@ module w65c02_core #(
     // it to accept a byte that it fetched ahead from that address.
     output logic        addr_is_pc,
     // How PC changed in the last completed cycle: 0 = not at all,
-    // 1 = by one byte, 2 = loaded with another value. Registered.
+    // 1 = by one byte, 2 = loaded with another value, 3 = by one byte
+    // and the operand bytes of a fused fetch (fused_bytes). Registered.
     output logic [1:0]  pc_move,
 
     input  logic        debug_load,
@@ -798,14 +808,16 @@ module w65c02_core #(
         endcase
     endfunction
 
-    task automatic apply_read_value(input logic [7:0] value);
+    task automatic apply_read_value(input op_t operation,
+                                    input logic immediate,
+                                    input logic [7:0] value);
         // Decimal ADC/SBC use the registered extra-cycle path. Keep their
         // correction logic out of these binary-only architectural updates.
         logic [8:0] compare_value;
         logic [15:0] arithmetic;
         logic [7:0] next_value;
         begin
-            case (op_q)
+            case (operation)
                 OP_ORA: begin
                     next_value = a_q | value;
                     a_q <= next_value;
@@ -845,7 +857,7 @@ module w65c02_core #(
                 end
                 OP_BIT: begin
                     p_q[P_Z] <= ((a_q & value) == 8'h00);
-                    if (mode_q != AM_IMM) begin
+                    if (!immediate) begin
                         p_q[P_N] <= value[7];
                         p_q[P_V] <= value[6];
                     end
@@ -992,6 +1004,173 @@ module w65c02_core #(
     wire turbo_skip_rmw_dummy = turbo_instruction && ea_q[15:12] != 4'hC;
     wire turbo_skip_rts_final = turbo_instruction && data_in[7:4] != 4'hC;
 
+    localparam logic [1:0] PC_MOVE_SAME = 2'd0;
+    localparam logic [1:0] PC_MOVE_INC  = 2'd1;
+    localparam logic [1:0] PC_MOVE_JUMP = 2'd2;
+    localparam logic [1:0] PC_MOVE_FUSED = 2'd3;
+    logic [1:0] pc_move_q;
+    assign pc_move = pc_move_q;
+
+    // ---- Fused fetch: the operand cycles in the opcode step ----
+    // What the opcode alone tells about a fused fetch. Each field is a
+    // function of the eight opcode bits only, so that the choice among the
+    // fused cases does not go through the general decode.
+    typedef struct packed {
+        logic valid;       // the opcode has a fused form
+        logic two;         // it takes two operand bytes
+        logic imm;         // one-hot class of the fused work
+        logic zp;
+        logic zpx;
+        logic zpy;
+        logic indx;
+        logic ptr;         // (zp),Y and (zp)
+        logic rel;
+        logic abs_mem;
+        logic jmp;
+        logic absx;
+        logic absy;
+        logic k_write;     // kind of the memory cycle that follows
+        logic k_rmw;
+        logic decimal;     // ADC or SBC: no fused immediate in decimal mode
+        logic index_dummy; // an indexed write, INC or DEC has a dummy cycle
+    } fuse_class_t;
+
+    function automatic fuse_class_t fuse_class_of(input logic [7:0] opcode);
+        decode_t d;
+        kind_t k;
+        logic memory;
+        fuse_class_t c;
+        begin
+            d = decode_opcode(opcode);
+            k = kind_for_op(d.op);
+            memory = (k == KIND_READ || k == KIND_WRITE || k == KIND_RMW);
+            c = '0;
+            if (!d.one_cycle) begin
+                case (d.mode)
+                    // ADC and SBC keep the operand step: a fused form
+                    // would share their adder with the operand path and
+                    // put a select in front of the decimal logic.
+                    AM_IMM:   c.imm  = memory && d.op != OP_ADC && d.op != OP_SBC;
+                    AM_ZP:    c.zp   = memory;
+                    AM_ZPX:   c.zpx  = memory;
+                    AM_ZPY:   c.zpy  = memory;
+                    AM_INDX:  c.indx = memory;
+                    AM_INDY, AM_ZPIND: c.ptr = memory;
+                    AM_REL:   c.rel  = (k == KIND_BRANCH);
+                    AM_ABS: begin
+                        c.abs_mem = memory && d.op != OP_NOP;
+                        c.jmp = (d.op == OP_JMP);
+                    end
+                    AM_ABSX:  c.absx = memory && d.op != OP_NOP;
+                    AM_ABSY:  c.absy = memory && d.op != OP_NOP;
+                    default: begin end
+                endcase
+            end
+            c.two = c.abs_mem || c.jmp || c.absx || c.absy;
+            c.valid = c.imm || c.zp || c.zpx || c.zpy || c.indx || c.ptr ||
+                      c.rel || c.two;
+            c.k_write = (k == KIND_WRITE);
+            c.k_rmw = (k == KIND_RMW);
+            c.decimal = (d.op == OP_ADC || d.op == OP_SBC);
+            c.index_dummy = (k == KIND_WRITE) ||
+                (k == KIND_RMW && (d.op == OP_INC || d.op == OP_DEC));
+            fuse_class_of = c;
+        end
+    endfunction
+
+    // A table of 256 entries, so that the class is one LUT-ROM read from
+    // the opcode and not a chain through the general decode.
+    (* rom_style = "distributed" *) logic [$bits(fuse_class_t)-1:0] fuse_rom [0:255];
+    initial begin
+        for (int i = 0; i < 256; i++)
+            fuse_rom[i] = fuse_class_of(8'(i));
+    end
+    fuse_class_t fuse;
+    assign fuse = fuse_class_t'(fuse_rom[data_in]);
+
+    wire [7:0]  ahead0 = ahead_data[7:0];
+    wire [7:0]  ahead1 = ahead_data[15:8];
+    wire [15:0] fuse_pc2 = pc_q + 16'd2;
+    wire [15:0] fuse_pc3 = pc_q + 16'd3;
+    wire [15:0] fuse_target = fuse_pc2 + {{8{ahead0[7]}}, ahead0};
+    wire [8:0]  fuse_sum_x = {1'b0, ahead0} + {1'b0, x_q};
+    wire [8:0]  fuse_sum_y = {1'b0, ahead0} + {1'b0, y_q};
+    wire [15:0] fuse_abs = {ahead1, ahead0};
+    wire [15:0] fuse_abs_x = fuse_abs + {8'h00, x_q};
+    wire [15:0] fuse_abs_y = fuse_abs + {8'h00, y_q};
+    wire fuse_taken = branch_taken(fetch_decode.op, p_q);
+    wire fuse_index_cross = fuse.absx ? fuse_sum_x[8] : fuse_sum_y[8];
+    // Conditions that do not depend on the opcode: TURBO, no interrupt,
+    // a byte ahead, and no I/O page under the operand bytes.
+    // PC+1 and PC+2 are outside $Cxxx when PC is not in $BFFE-$CFFF. This
+    // form needs no adder; it leaves out $CFFE and $CFFF, where no code of
+    // untimed memory is.
+    wire fuse_pc_ok = pc_q[15:12] != 4'hC && pc_q[15:1] != 15'h5FFF;
+    wire fuse_env = state_q == ST_FETCH && turbo_requested && !fetch_interrupt &&
+                    fuse_pc_ok && ahead_valid[0];
+    // A taken branch reads the page of the next PC twice. The indexed dummy
+    // read is at the target or at PC+2: take the short way only when the
+    // two are not I/O. No decimal immediate: it has its extra cycle.
+    wire fuse_go = fuse_env && fuse.valid &&
+        (!fuse.two || ahead_valid[1]) &&
+        (!(fuse.absx || fuse.absy) || ahead1[7:4] != 4'hC);
+    assign fused_bytes = !fuse_go ? 2'd0 : fuse.two ? 2'd2 : 2'd1;
+
+    // The work of ST_OPERAND (and ST_ABS_HI) with the bytes read ahead.
+    task automatic fuse_operand;
+        begin
+            operand_q <= ahead0;
+            pc_q <= fuse.two ? fuse_pc3 : fuse_pc2;
+            pc_move_q <= PC_MOVE_FUSED;
+            if (fuse.two) begin
+                lo_q <= ahead0;
+                hi_q <= ahead1;
+                dummy_addr_q <= fuse_pc2;
+            end
+            if (fuse.imm)
+                apply_read_value(fetch_decode.op, 1'b1, ahead0);
+            if (fuse.zp)      ea_q <= {8'h00, ahead0};
+            if (fuse.zpx)     ea_q <= {8'h00, fuse_sum_x[7:0]};
+            if (fuse.zpy)     ea_q <= {8'h00, fuse_sum_y[7:0]};
+            if (fuse.abs_mem) ea_q <= fuse_abs;
+            if (fuse.absx) begin
+                ea_q <= fuse_abs_x;
+                page_cross_q <= fuse_sum_x[8];
+            end
+            if (fuse.absy) begin
+                ea_q <= fuse_abs_y;
+                page_cross_q <= fuse_sum_y[8];
+            end
+            if (fuse.indx)    ptr_q <= fuse_sum_x[7:0];
+            if (fuse.ptr)     ptr_q <= ahead0;
+            if (fuse.rel) begin
+                target_q <= fuse_target;
+                page_cross_q <= fuse_pc2[15:8] != fuse_target[15:8];
+                if (fuse_taken) begin
+                    pc_q <= fuse_target;
+                    pc_move_q <= PC_MOVE_JUMP;
+                end
+            end
+            if (fuse.jmp) begin
+                pc_q <= fuse_abs;
+                pc_move_q <= PC_MOVE_JUMP;
+            end
+
+            if (fuse.imm || fuse.rel || fuse.jmp) begin
+                instruction_done <= 1'b1;
+                begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
+            end else if (fuse.indx || fuse.ptr) begin
+                begin state_q <= ST_PTR_LO; asel_q <= asel_of(ST_PTR_LO); end
+            end else if (fuse.k_write) begin
+                begin state_q <= ST_MEM_WRITE; asel_q <= asel_of(ST_MEM_WRITE); end
+            end else if (fuse.k_rmw) begin
+                begin state_q <= ST_RMW_READ; asel_q <= asel_of(ST_RMW_READ); end
+            end else begin
+                begin state_q <= ST_MEM_READ; asel_q <= asel_of(ST_MEM_READ); end
+            end
+        end
+    endtask
+
     // Account for classic time at the edge that removes subsequent dummy
     // reads. Device logic can drain these ticks before the next CPU access;
     // a stalled step must not consume any ticks. Classic mode always emits 1.
@@ -999,7 +1178,17 @@ module w65c02_core #(
         cycle_ticks = 4'd1;
         case (state_q)
             ST_FETCH: begin
-                if (turbo_fetch_skip_pc) begin
+                if (fuse_go) begin
+                    // Fetch, the operand cycles, and the dummy cycles that
+                    // TURBO leaves out of those.
+                    cycle_ticks = 4'd2;
+                    if (fuse.zpx || fuse.zpy || fuse.indx || fuse.abs_mem || fuse.jmp)
+                        cycle_ticks = 4'd3;
+                    if (fuse.rel && fuse_taken)
+                        cycle_ticks = (fuse_pc2[15:8] != fuse_target[15:8]) ? 4'd4 : 4'd3;
+                    if (fuse.absx || fuse.absy)
+                        cycle_ticks = (fuse.index_dummy || fuse_index_cross) ? 4'd4 : 4'd3;
+                end else if (turbo_fetch_skip_pc) begin
                     case (fetch_decode.op)
                         OP_PHP, OP_PHA, OP_PHX, OP_PHY: cycle_ticks = 4'd2;
                         OP_PLP, OP_PLA, OP_PLX, OP_PLY, OP_RTS, OP_RTI:
@@ -1046,12 +1235,6 @@ module w65c02_core #(
 
     assign addr_is_pc = (state_q == ST_FETCH) || (state_q == ST_OPERAND) ||
                         (state_q == ST_ABS_HI) || (state_q == ST_JSR_LOW);
-
-    localparam logic [1:0] PC_MOVE_SAME = 2'd0;
-    localparam logic [1:0] PC_MOVE_INC  = 2'd1;
-    localparam logic [1:0] PC_MOVE_JUMP = 2'd2;
-    logic [1:0] pc_move_q;
-    assign pc_move = pc_move_q;
 
     assign debug_pc = pc_q;
     assign debug_s  = s_q;
@@ -1277,6 +1460,13 @@ module w65c02_core #(
                                 endcase
                             end
                         end
+                        // For an opcode with a fused form, the code above
+                        // only moved PC and chose ST_OPERAND. The fused work
+                        // sets these again; the last assignment is the one
+                        // that counts. Other opcodes do not get here, so the
+                        // plain fetch does not wait for the fused choice.
+                        if (fuse_go)
+                            fuse_operand();
                     end
 
                     ST_IMPLIED: begin
@@ -1301,7 +1491,7 @@ module w65c02_core #(
                                     ea_q <= (op_q == OP_ADC) ? 16'h007F : 16'h0000;
                                     begin state_q <= ST_DECIMAL_EXTRA; asel_q <= asel_of(ST_DECIMAL_EXTRA); end
                                 end else begin
-                                    apply_read_value(data_in);
+                                    apply_read_value(op_q, mode_q == AM_IMM, data_in);
                                     instruction_done <= 1'b1;
                                     begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                                 end
@@ -1513,7 +1703,7 @@ module w65c02_core #(
                             decimal_so_pending_q <= 1'b0;
                             begin state_q <= ST_DECIMAL_EXTRA; asel_q <= asel_of(ST_DECIMAL_EXTRA); end
                         end else begin
-                            apply_read_value(data_in);
+                            apply_read_value(op_q, mode_q == AM_IMM, data_in);
                             instruction_done <= 1'b1;
                             begin state_q <= ST_FETCH; asel_q <= asel_of(ST_FETCH); end
                         end

@@ -858,7 +858,11 @@ module tb_vtw_disk2_speed_matrix;
                 @(posedge clk);
                 #1ps;
             end
-            check(private_select_count == private_before + 1,
+            // The core may start the next read inside this window. Each
+            // accepted request must complete once, and not more.
+            check(private_select_count >= private_before + 1 &&
+                  (private_select_count - private_before) <=
+                  (private_req_count - req_before),
                   "private READY release did not complete exactly once");
         end
 

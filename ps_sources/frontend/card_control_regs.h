@@ -398,6 +398,9 @@
 /* Freeze the 65C02 at a completed cycle without dropping CORE_RUN or reset.
  * ONE//e uses this while the Appletini config menu owns USB input. */
 #define CARD_CTRL_VTW_CTRL_PAUSE_BIT       (1UL << 8)
+/* TURBO: do not do the operand cycles in the opcode step (fused fetch).
+ * A test switch, set from the UART; zero is the normal fast state. */
+#define CARD_CTRL_VTW_CTRL_NO_FUSE_BIT     (1UL << 9)
 /* 16-bit pace divider at [31:16] (50 kHz slug mode needs divider 2667). */
 #define CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT   16U
 #define CARD_CTRL_VTW_CTRL_DIVIDER_MASK    0xFFFFUL

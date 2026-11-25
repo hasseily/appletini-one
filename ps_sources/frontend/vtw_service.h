@@ -54,6 +54,9 @@ void vtw_service_set_ignore_c074(uint8_t ignore);
 
 /* Force virtual Disk II accesses through the original physical 1 MHz path. */
 void vtw_service_set_disk2_accel_disabled(uint8_t disable);
+/* Fused fetch of the TURBO core, for tests. Not saved. */
+void vtw_service_set_fuse_disabled(uint8_t disable);
+uint8_t vtw_service_fuse_disabled(void);
 
 /* Apply the current effective Slot 6 service setting. */
 void vtw_service_set_disk2_config_enabled(uint8_t enable);

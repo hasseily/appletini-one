@@ -2530,6 +2530,7 @@ module apple_top(
         .speed_mode(vtw_ctrl_q[3:2]),
         .pace_divider(vtw_ctrl_q[31:16]),
         .ignore_c074(vtw_ctrl_q[6]),
+        .fuse_disable(vtw_ctrl_q[9]),
         .irq_assert_in(virtual_ab_write_arb.assert_irq),
         .data_drive_in(virtual_ab_write_arb.wr_data_en),
         .data_drive_value_in(virtual_ab_write_arb.wr_data),

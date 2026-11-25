@@ -82,6 +82,7 @@ static uint8_t  g_ignore_c074;
 /* Persisted compatibility option: keep Disk II on the original physical
  * 1 MHz path instead of using vTW's private read shortcut. */
 static uint8_t  g_disable_disk2_accel;
+static uint8_t  g_disable_fuse;
 /* Result of the last speed action, for the on-screen overlay. */
 static char     g_last_action_text[40];
 
@@ -194,6 +195,9 @@ static uint32_t vtw_ctrl_value(uint8_t enable, uint8_t core_run,
     if (g_ignore_c074 != 0U) {
         v |= CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT;
     }
+    if (g_disable_fuse != 0U) {
+        v |= CARD_CTRL_VTW_CTRL_NO_FUSE_BIT;
+    }
     if (g_disable_disk2_accel != 0U) {
         v |= CARD_CTRL_VTW_CTRL_DISABLE_D2_ACCEL_BIT;
     }
@@ -216,6 +220,9 @@ static uint32_t vtw_onee_ctrl_value(uint8_t core_run, uint8_t apple_res)
     v |= ((uint32_t)vtw_eff_divider()) << CARD_CTRL_VTW_CTRL_DIVIDER_SHIFT;
     if (g_ignore_c074 != 0U) {
         v |= CARD_CTRL_VTW_CTRL_IGNORE_C074_BIT;
+    }
+    if (g_disable_fuse != 0U) {
+        v |= CARD_CTRL_VTW_CTRL_NO_FUSE_BIT;
     }
     if (g_onee_pause_requested != 0U) {
         v |= CARD_CTRL_VTW_CTRL_PAUSE_BIT;
@@ -552,6 +559,17 @@ void vtw_service_set_disk2_accel_disabled(uint8_t disable)
 {
     g_disable_disk2_accel = (disable != 0U) ? 1U : 0U;
     vtw_apply_ctrl_options_live();
+}
+
+void vtw_service_set_fuse_disabled(uint8_t disable)
+{
+    g_disable_fuse = (disable != 0U) ? 1U : 0U;
+    vtw_apply_ctrl_options_live();
+}
+
+uint8_t vtw_service_fuse_disabled(void)
+{
+    return g_disable_fuse;
 }
 
 /* ---- Runtime speed overrides (USB keymap actions) ------------------- */
@@ -1325,6 +1343,8 @@ void vtw_service_uart_status(uint32_t uart_base)
              (g_slowdown_mask == 0U || g_slowdown_cycles == 0U)
                  ? " [inactive]" : "");
     uart_puts(uart_base, line);
+    uart_puts(uart_base, g_disable_fuse != 0U ? "vtw: fuse=off\r\n"
+                                              : "vtw: fuse=on\r\n");
     snprintf(line, sizeof(line),
              "vtw: speed=%s%s div=%u c074=%lu ignore=%u d2accel=%s owned=%lu run=%lu pc=%04lX\r\n",
              vtw_eff_speed_name(),

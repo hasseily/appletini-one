@@ -148,6 +148,8 @@ module vtw_core_top (
     output logic [16:0]             video_record_addr,
     output logic [7:0]              video_record_data,
     input  logic                    video_record_ready,
+    // Test switch: no bytes ahead for the core, so no fused fetch.
+    input  logic                    fuse_disable = 1'b0,
     output logic                    video_direct_active,
     // During a deferred-bank flush, capture must retain the CPU's display
     // switch snapshot while the physical RAMWRT/PAGE2 steering is temporary.
@@ -348,6 +350,25 @@ module vtw_core_top (
     logic        pf_read_valid_q;
     wire         pf_complete;
     wire         pf_accept;
+    /* Fused fetch. With an opcode the core also gets the two code bytes
+     * after it, when they are in the same cache word, and then does the
+     * operand cycles in the opcode step. */
+    wire [1:0]   core_fused_bytes;
+    wire [15:0]  turbo_rahead;
+    wire [1:0]   turbo_rahead_valid;
+    logic [15:0] turbo_ahead_q;
+    logic [1:0]  turbo_ahead_valid_q;
+    logic [15:0] pf_ahead_q;
+    logic [1:0]  pf_ahead_valid_q;
+    logic [15:0] pf_base_q;        // address of the first word of the lookup
+    logic [15:0] pf_next_q;        // address of the second word
+    logic [8:0]  pf_tag1_q;
+    logic        pf_read1_valid_q;
+    logic        pf_op_word1_q;    // the opcode is in the second word
+    logic [1:0]  pf_ahead_word1_q; // the same for the two bytes ahead
+    logic [1:0]  pf_ahead_in_q;    // the byte ahead is inside the window
+    wire [1:0]   core_ahead_valid;
+    wire [15:0]  core_ahead_data;
 
     /* Motherboard RES# resets the core through the shadow's reset vector;
      * /DMA stays held (vtw_bus_engine). CTRL-RESET with the vTW disabled
@@ -384,6 +405,9 @@ module vtw_core_top (
         .enable(core_en),
         .ready(1'b1),
         .turbo(turbo_execute),
+        .ahead_valid(core_ahead_valid),
+        .ahead_data(core_ahead_data),
+        .fused_bytes(core_fused_bytes),
         .cycle_ticks(core_cycle_ticks),
         .addr_is_pc(core_addr_is_pc),
         .pc_move(core_pc_move),
@@ -1047,6 +1071,14 @@ module vtw_core_top (
     // Decode cache completion and response selection with one state bit.
     (* fsm_encoding = "one_hot" *) xstate_t xstate_q;
     // In X_CAPTURE the only possible completion is a prefetched byte.
+    wire pf_tag0_hit, pf_tag1_hit;
+    wire [1:0] pf_ahead_hit = {pf_ahead_word1_q[1] ? pf_tag1_hit : pf_tag0_hit,
+                               pf_ahead_word1_q[0] ? pf_tag1_hit : pf_tag0_hit};
+    assign core_ahead_valid = fuse_disable ? 2'b00 :
+                              (xstate_q == X_TURBO_DONE) ? turbo_ahead_valid_q :
+                              (xstate_q == X_CAPTURE) ? (pf_ahead_valid_q & pf_ahead_hit & pf_ahead_in_q)
+                                                      : 2'b00;
+    assign core_ahead_data = (xstate_q == X_TURBO_DONE) ? turbo_ahead_q : pf_ahead_q;
     assign core_data_in = (xstate_q == X_TURBO_DONE) ? turbo_rdata_q :
                           (xstate_q == X_CAPTURE)    ? pf_rdata_q : core_data_in_q;
 
@@ -1275,6 +1307,36 @@ module vtw_core_top (
     wire        pf_read_valid;
     wire [15-TURBO_BYTE_INDEX_BITS:0] pf_read_tag;
     wire [7:0]  pf_rdata;
+    wire [31:0] pf_rword;
+    /* The lookup reads two cache words: the word of PC and the word after
+     * it, a window of eight bytes. The word addresses come from the PC
+     * register with no adder in front of the first one. The step that
+     * completes now can be a fused fetch, which moves PC by one byte and
+     * its operand bytes. That count comes late and only selects among
+     * five bytes that the early offset already chose. */
+    wire [31:0] pf_rword1;
+    wire        pf_read1_valid;
+    wire [15-TURBO_BYTE_INDEX_BITS:0] pf_read1_tag;
+    wire [15:0] pf_base_addr = {dbg_core_pc[15:2], 2'b00};
+    wire [15:0] pf_next_addr = {dbg_core_pc[15:2] + 14'd1, 2'b00};
+    // Offset in the window of the byte that a plain step reads next.
+    wire [2:0]  pf_first = {1'b0, dbg_core_pc[1:0]} + {2'b00, pf_is_code};
+    wire [63:0] pf_window = {pf_rword1, pf_rword};
+    logic [7:0] pf_candidate [0:4];
+    always_comb begin
+        for (int i = 0; i < 5; i++) begin
+            logic [3:0] position;
+            position = {1'b0, pf_first} + 4'(i);
+            pf_candidate[i] = position[3] ? 8'h00 : pf_window[8*position[2:0] +: 8];
+        end
+    end
+    // Position of the next opcode in the window: 0 to 6.
+    wire [2:0]  pf_start = pf_first + {1'b0, core_fused_bytes};
+    wire [15:0] pf_addr_plus1 = pf_lookup_addr + 16'd1;
+    wire [15:0] pf_addr_plus2 = pf_lookup_addr + 16'd2;
+    wire [15:0] pf_opcode_addr = (core_fused_bytes == 2'd2) ? pf_addr_plus2 :
+                                 (core_fused_bytes == 2'd1) ? pf_addr_plus1 :
+                                                              pf_lookup_addr;
     vtw_turbo_cache #(.BYTE_INDEX_BITS(TURBO_BYTE_INDEX_BITS)) turbo_cache_i (
         .clk(clk), .rstn(rstn), .invalidate(turbo_invalidate),
         .addr(core_addr), .rw(core_rwb),
@@ -1282,8 +1344,11 @@ module vtw_core_top (
         .write_valid(turbo_write_valid), .write_tag(turbo_write_tag),
         .write_fast(turbo_write_fast),
         .rdata(turbo_rdata), .write_phys(turbo_write_phys),
-        .addr2(pf_lookup_addr), .read2_valid(pf_read_valid),
-        .read2_tag(pf_read_tag), .rdata2(pf_rdata),
+        .rahead(turbo_rahead), .rahead_valid(turbo_rahead_valid),
+        .addr2(pf_base_addr), .read2_valid(pf_read_valid),
+        .read2_tag(pf_read_tag), .rdata2(pf_rdata), .rword2(pf_rword),
+        .addr3(pf_next_addr), .read3_valid(pf_read1_valid),
+        .read3_tag(pf_read1_tag), .rword3(pf_rword1),
         .map_fill(turbo_map_fill), .map_addr(cycle_addr_q),
         .map_rw(cycle_rw_q), .map_phys(xl_shadow_phys),
         .map_fast_write(turbo_map_fast_write),
@@ -1593,10 +1658,17 @@ module vtw_core_top (
      * keeps a 16-bit compare out of the core enable. The speed mode and the
      * video barrier are taken at the lookup (see pf_valid_q), one clock
      * before the use, as the cached path takes them at its capture. */
-    wire pf_tag_hit = pf_read_valid_q &&
-                      pf_tag_q == 9'(pf_addr_q[15:TURBO_BYTE_INDEX_BITS]) &&
-                      pf_addr_q[15:12] != 4'hC;
-    wire pf_pc_ok = pf_is_code_q ? (core_pc_move == 2'd1) : (core_pc_move == 2'd0);
+    assign pf_tag0_hit = pf_read_valid_q &&
+                         pf_tag_q == 9'(pf_base_q[15:TURBO_BYTE_INDEX_BITS]) &&
+                         pf_base_q[15:12] != 4'hC;
+    assign pf_tag1_hit = pf_read1_valid_q &&
+                         pf_tag1_q == 9'(pf_next_q[15:TURBO_BYTE_INDEX_BITS]) &&
+                         pf_next_q[15:12] != 4'hC;
+    wire pf_tag_hit = pf_op_word1_q ? pf_tag1_hit : pf_tag0_hit;
+    // 1 = PC moved by one byte, 3 = by one byte and fused operand bytes;
+    // the lookup took the same operand count.
+    wire pf_pc_ok = pf_is_code_q ? (core_pc_move == 2'd1 || core_pc_move == 2'd3)
+                                 : (core_pc_move == 2'd0);
     assign pf_complete = (xstate_q == X_CAPTURE) && pf_valid_q && pf_tag_hit &&
                          core_addr_is_pc && pf_pc_ok &&
                          pace_ok && core_active &&
@@ -1765,6 +1837,17 @@ module vtw_core_top (
             pf_is_code_q        <= 1'b0;
             pf_addr_q           <= '0;
             pf_rdata_q          <= 8'hFF;
+            pf_ahead_q          <= '0;
+            pf_ahead_valid_q    <= 2'b00;
+            pf_base_q           <= '0;
+            pf_next_q           <= '0;
+            pf_tag1_q           <= '0;
+            pf_read1_valid_q    <= 1'b0;
+            pf_op_word1_q       <= 1'b0;
+            pf_ahead_word1_q    <= 2'b00;
+            pf_ahead_in_q       <= 2'b00;
+            turbo_ahead_q       <= '0;
+            turbo_ahead_valid_q <= 2'b00;
             pf_tag_q            <= '0;
             pf_read_valid_q     <= 1'b0;
             cycle_addr_q        <= '0;
@@ -2001,8 +2084,34 @@ module vtw_core_top (
 
             // Prefetch: look up every clock; the entry is valid only in
             // the clock after a completed cached read.
-            pf_addr_q       <= pf_lookup_addr;
-            pf_rdata_q      <= pf_rdata;
+            pf_addr_q       <= pf_opcode_addr;
+            pf_base_q       <= pf_base_addr;
+            pf_next_q       <= pf_next_addr;
+            unique case (core_fused_bytes)
+                2'd1: begin
+                    pf_rdata_q <= pf_candidate[1];
+                    pf_ahead_q <= {pf_candidate[3], pf_candidate[2]};
+                end
+                2'd2: begin
+                    pf_rdata_q <= pf_candidate[2];
+                    pf_ahead_q <= {pf_candidate[4], pf_candidate[3]};
+                end
+                default: begin
+                    pf_rdata_q <= pf_candidate[0];
+                    pf_ahead_q <= {pf_candidate[2], pf_candidate[1]};
+                end
+            endcase
+            pf_op_word1_q    <= pf_start >= 3'd4;
+            pf_ahead_word1_q <= {pf_start >= 3'd2, pf_start >= 3'd3};
+            pf_ahead_in_q    <= {pf_start <= 3'd5, 1'b1};
+            pf_tag1_q        <= 9'(pf_read1_tag);
+            pf_read1_valid_q <= pf_read1_valid;
+            // A cached write commits on this edge, after the lookup read:
+            // no bytes ahead when the write is in one of the two words.
+            pf_ahead_valid_q <=
+                {2{cycle_rw_q || xstate_q != X_TURBO_DONE ||
+                   (cycle_addr_q[15:2] != pf_base_addr[15:2] &&
+                    cycle_addr_q[15:2] != pf_next_addr[15:2])}};
             pf_tag_q        <= 9'(pf_read_tag);
             pf_read_valid_q <= pf_read_valid;
             // A cached write commits on this same edge, after the lookup
@@ -2064,6 +2173,8 @@ module vtw_core_top (
                         // Hits still retire on the next edge; a miss takes
                         // one extra edge before the original route.
                         turbo_rdata_q           <= turbo_rdata;
+                        turbo_ahead_q           <= turbo_rahead;
+                        turbo_ahead_valid_q     <= turbo_rahead_valid;
                         turbo_write_phys_q      <= turbo_write_phys;
                         turbo_read_tag_q        <= turbo_read_tag;
                         turbo_write_tag_q       <= turbo_write_tag;

@@ -10,6 +10,9 @@ module tb_w65c02_turbo;
     logic [1:0] enable = 2'b00;
     logic [1:0] ready = 2'b11;
     logic turbo = 1'b1;
+    logic [1:0] ahead_valid = 2'b00;
+    wire [1:0] fused_bytes [0:1];
+    integer fused_steps = 0;
     logic irq_n = 1'b1;
     logic nmi_n = 1'b1;
     logic nmi_on_fetch = 1'b0;
@@ -35,6 +38,12 @@ module tb_w65c02_turbo;
         w65c02_core #(.DEBUG_STATE_LOAD(1'b1)) dut (
             .clk(clk), .reset_n(reset_n), .enable(enable[core]),
             .ready(ready[core]), .turbo(core == 1 ? turbo : 1'b0),
+            // The fast core gets the two bytes after PC, as a wrapper with
+            // a fetch queue does, with a random valid pattern.
+            .ahead_valid(core == 1 ? ahead_valid : 2'b00),
+            .ahead_data({memory[core][16'(pc[core] + 16'd2)],
+                         memory[core][16'(pc[core] + 16'd1)]}),
+            .fused_bytes(fused_bytes[core]),
             .irq_n(irq_n), .nmi_n(nmi_n), .so_n(1'b1),
             .data_in(memory[core][addr[core]]), .addr(addr[core]),
             .data_out(data_out[core]), .rwb(rwb[core]), .sync(sync[core]),
@@ -102,6 +111,8 @@ module tb_w65c02_turbo;
             nmi_n = 1'b0;
         elapsed = 0;
         while (enable != 2'b00 && elapsed < 100) begin
+            // A case with a fixed step count runs without bytes ahead.
+            ahead_valid = (expected_fast_cycles >= 0) ? 2'b00 : 2'(random_word() >> 9);
             #1;
             for (int core = 0; core < 2; core++) begin
                 ready[core] = !stalls || (random_word() & 3) != 0;
@@ -109,7 +120,8 @@ module tb_w65c02_turbo;
                 frozen_bus[core] = {rwb[core], addr[core], data_out[core]};
                 if (enable[core] && ready[core]) begin
                     cycles[core]++;
-                    check(cycle_ticks[core] >= 1 && cycle_ticks[core] <= 3,
+                    if (fused_bytes[core] != 2'd0) fused_steps++;
+                    check(cycle_ticks[core] >= 1 && cycle_ticks[core] <= 4,
                           "invalid accepted-step guest-cycle count");
                     if (core == 0)
                         check(cycle_ticks[core] == 1, "classic step must count one cycle");
@@ -305,7 +317,8 @@ module tb_w65c02_turbo;
             end
         end
         check(saved_cycles > 1000, "turbo shortcuts were not exercised");
-        $display("W65C02 TURBO PASS cases=%0d saved_cycles=%0d", cases, saved_cycles);
+        check(fused_steps > 1000, "fused fetch steps were not exercised");
+        $display("W65C02 TURBO PASS cases=%0d saved_cycles=%0d fused_steps=%0d", cases, saved_cycles, fused_steps);
         $finish;
     end
 endmodule

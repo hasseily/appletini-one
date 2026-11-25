@@ -20,6 +20,10 @@ module vtw_turbo_cache #(
     output logic [7:0]  write_tag,
     output logic        write_fast,
     output logic [7:0]  rdata,
+    // The two bytes after rdata, when they are in the same cache word:
+    // rahead[7:0] at addr + 1, rahead[15:8] at addr + 2.
+    output logic [15:0] rahead,
+    output logic [1:0]  rahead_valid,
     output logic [17:0] write_phys,
 
     // Second read port of the word cache, for the code prefetch.
@@ -27,6 +31,12 @@ module vtw_turbo_cache #(
     output logic        read2_valid,
     output logic [15-BYTE_INDEX_BITS:0] read2_tag,
     output logic [7:0]  rdata2,
+    output logic [31:0] rword2,   // the whole word of addr2
+    // Third read port of the word cache: the word after that of addr2.
+    input  logic [15:0] addr3,
+    output logic        read3_valid,
+    output logic [15-BYTE_INDEX_BITS:0] read3_tag,
+    output logic [31:0] rword3,
 
     input  logic        map_fill,
     input  logic [15:0] map_addr,
@@ -55,6 +65,7 @@ module vtw_turbo_cache #(
     (* ram_style = "distributed" *) logic [TAG_BITS+9:0] word_tag_mem [0:WORD_COUNT-1];
     wire [31:0] read_word;
     wire [31:0] read2_word;
+    wire [31:0] read3_word;
 
     /* Zero page and stack. These two pages hold the working registers of
      * 6502 code, and in the shared word cache they both miss often and push
@@ -114,12 +125,24 @@ module vtw_turbo_cache #(
     assign rdata = low_page ? low_word[8*addr[1:0] +: 8]
                             : read_word[8*addr[1:0] +: 8];
     assign write_phys = {map_entry[9:0], addr[7:0]};
+    wire [1:0] ahead_sel1 = addr[1:0] + 2'd1;
+    wire [1:0] ahead_sel2 = addr[1:0] + 2'd2;
+    assign rahead = {read_word[8*ahead_sel2 +: 8], read_word[8*ahead_sel1 +: 8]};
+    assign rahead_valid = {!low_page && !addr[1],
+                           !low_page && addr[1:0] != 2'd3};
 
     wire [WORD_INDEX_BITS-1:0] word2_index = word_set(addr2);
     wire [TAG_BITS+9:0] word2_tag = word_tag_mem[word2_index];
     assign read2_valid = word_valid_q[word2_index] && addr2[15:9] != 7'd0;
     assign read2_tag = word2_tag[TAG_BITS+9:10];
     assign rdata2 = read2_word[8*addr2[1:0] +: 8];
+    assign rword2 = read2_word;
+
+    wire [WORD_INDEX_BITS-1:0] word3_index = word_set(addr3);
+    wire [TAG_BITS+9:0] word3_tag = word_tag_mem[word3_index];
+    assign read3_valid = word_valid_q[word3_index] && addr3[15:9] != 7'd0;
+    assign read3_tag = word3_tag[TAG_BITS+9:10];
+    assign rword3 = read3_word;
 
     wire [MAP_INDEX_BITS:0] fill_map_index = {map_rw, page_set(map_addr[15:8])};
     wire [WORD_INDEX_BITS-1:0] snoop_index = word_set(snoop_addr);
@@ -157,6 +180,7 @@ module vtw_turbo_cache #(
         wire [7:0] lane_wdata = snoop_write ? snoop_data : word_data[8*lane +: 8];
         assign read_word[8*lane +: 8] = byte_mem[word_index];
         assign read2_word[8*lane +: 8] = byte_mem[word2_index];
+        assign read3_word[8*lane +: 8] = byte_mem[word3_index];
         always_ff @(posedge clk) begin
             if (lane_write)
                 byte_mem[data_write_index] <= lane_wdata;

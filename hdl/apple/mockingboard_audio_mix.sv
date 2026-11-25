@@ -133,64 +133,24 @@ function automatic signed [15:0] tone_fp_to_pcm(input signed [31:0] sample);
     tone_fp_to_pcm = sample[27:12];
 endfunction
 
-function automatic signed [20:0] audio_control_adjust(input signed [15:0] sample,
-                                                      input signed [4:0] control);
-    logic signed [20:0] widened;
-    logic signed [20:0] adjusted;
-    logic signed [4:0] magnitude;
-    begin
-        widened = {{5{sample[15]}}, sample};
-        magnitude = (control < 0) ? -control : control;
-        case (magnitude[3:0])
-            4'd0:    adjusted = 21'sd0;
-            4'd1:    adjusted = widened >>> 3;
-            4'd2:    adjusted = widened >>> 2;
-            4'd3:    adjusted = (widened >>> 2) + (widened >>> 3);
-            4'd4:    adjusted = widened >>> 1;
-            4'd5:    adjusted = (widened >>> 1) + (widened >>> 3);
-            4'd6:    adjusted = (widened >>> 1) + (widened >>> 2);
-            4'd7:    adjusted = (widened >>> 1) + (widened >>> 2) + (widened >>> 3);
-            default: adjusted = widened;
-        endcase
-        audio_control_adjust = (control < 0) ? -adjusted : adjusted;
-    end
-endfunction
-
-// Bass, mid and treble: the part of the band that is added to the mix.
-// A cut removes 1/8 of the band for each step, and step 8 removes all of it.
+// Gain that a tone control adds to its band, in eighths of the band.
+// A cut removes 1/8 of the band for each step; step -8 removes all of it.
 // A boost grows faster toward the end of the range:
 //   step   1    2    3    4    5    6    7    8
 //   adds  1/8  1/4  1/2  3/4   1   1.5   2    3   times the band
 //   gain  +1.0 +1.9 +3.5 +4.9 +6.0 +8.0 +9.5 +12.0 dB
-function automatic signed [20:0] tone_band_adjust(input signed [15:0] sample,
-                                                  input signed [4:0] control);
-    logic signed [20:0] widened;
-    begin
-        widened = {{5{sample[15]}}, sample};
-        if (control <= 0) begin
-            tone_band_adjust = audio_control_adjust(sample, control);
-        end else begin
-            case (control[3:0])
-                4'd1:    tone_band_adjust = widened >>> 3;
-                4'd2:    tone_band_adjust = widened >>> 2;
-                4'd3:    tone_band_adjust = widened >>> 1;
-                4'd4:    tone_band_adjust = (widened >>> 1) + (widened >>> 2);
-                4'd5:    tone_band_adjust = widened;
-                4'd6:    tone_band_adjust = widened + (widened >>> 1);
-                4'd7:    tone_band_adjust = widened <<< 1;
-                default: tone_band_adjust = (widened <<< 1) + widened;
-            endcase
-        end
-    end
-endfunction
-
-function automatic signed [20:0] warmth_treble_adjust(input signed [15:0] sample,
-                                                       input signed [4:0] control);
-    logic signed [20:0] shaped;
-    begin
-        shaped = audio_control_adjust(sample, control) >>> 2;
-        warmth_treble_adjust = -shaped;
-    end
+function automatic signed [5:0] tone_band_gain(input signed [4:0] control);
+    case (control)
+        5'sd1:   tone_band_gain = 6'sd1;
+        5'sd2:   tone_band_gain = 6'sd2;
+        5'sd3:   tone_band_gain = 6'sd4;
+        5'sd4:   tone_band_gain = 6'sd6;
+        5'sd5:   tone_band_gain = 6'sd8;
+        5'sd6:   tone_band_gain = 6'sd12;
+        5'sd7:   tone_band_gain = 6'sd16;
+        5'sd8:   tone_band_gain = 6'sd24;
+        default: tone_band_gain = {control[4], control};
+    endcase
 endfunction
 
 function automatic signed [15:0] sat16_from21(input signed [20:0] sample);
@@ -282,6 +242,13 @@ logic signed [15:0] tone_bass_q;
 logic signed [15:0] tone_warm_q;
 logic signed [15:0] tone_mid_q;
 logic signed [15:0] tone_treble_q;
+logic signed [15:0] tone_treble_band_q;
+logic signed [5:0]  tone_bass_gain_q;
+logic signed [5:0]  tone_mid_gain_q;
+logic signed [5:0]  tone_treble_gain_q;
+logic signed [5:0]  tone_warm_gain_q;
+logic signed [5:0]  tone_warm_treble_gain_q;
+logic signed [5:0]  tone_volume_gain_q;
 logic signed [4:0]  tone_bass_control_q;
 logic signed [4:0]  tone_mid_control_q;
 logic signed [4:0]  tone_treble_control_q;
@@ -319,6 +286,18 @@ wire signed [18:0] base_sum =
 wire signed [15:0] base_next =
     (base_sum > 19'sd32767)  ? 16'sh7fff :
     (base_sum < -19'sd32768) ? 16'sh8000 : base_sum[15:0];
+// One multiplier block for each control: band times gain. The gain is in
+// eighths, so the adjust value is the product without its three low bits.
+(* use_dsp = "yes" *) wire signed [21:0] tone_bass_product = tone_bass_q * tone_bass_gain_q;
+(* use_dsp = "yes" *) wire signed [21:0] tone_warm_product = tone_warm_q * tone_warm_gain_q;
+(* use_dsp = "yes" *) wire signed [21:0] tone_warm_treble_product =
+    tone_treble_q * tone_warm_treble_gain_q;
+(* use_dsp = "yes" *) wire signed [21:0] tone_mid_product = tone_mid_q * tone_mid_gain_q;
+(* use_dsp = "yes" *) wire signed [21:0] tone_treble_product =
+    tone_treble_band_q * tone_treble_gain_q;
+(* use_dsp = "yes" *) wire signed [21:0] tone_volume_product =
+    tone_apply_base_q * tone_volume_gain_q;
+
 // Filter outputs of the side in tone_base_q.
 wire signed [15:0] low = tone_fp_to_pcm(tone_low_q[1]);
 wire signed [15:0] warm_lp = tone_fp_to_pcm(tone_warm_lp_q[1]);
@@ -343,6 +322,13 @@ always_ff @(posedge clk) begin
         tone_warm_q <= '0;
         tone_mid_q <= '0;
         tone_treble_q <= '0;
+        tone_treble_band_q <= '0;
+        tone_bass_gain_q <= '0;
+        tone_mid_gain_q <= '0;
+        tone_treble_gain_q <= '0;
+        tone_warm_gain_q <= '0;
+        tone_warm_treble_gain_q <= '0;
+        tone_volume_gain_q <= '0;
         tone_bass_control_q <= '0;
         tone_mid_control_q <= '0;
         tone_treble_control_q <= '0;
@@ -390,7 +376,14 @@ always_ff @(posedge clk) begin
             tone_mid_lp_q[1] <= tone_mid_lp_q[0];
 
             tone_apply_base_q <= tone_base_q;
-            tone_bass_q <= low;
+            // A first-order band has gentle slopes, so a cut of the normal
+            // band leaves most of the music. The cut side of Bass and Treble
+            // uses a wider band: all below, or all above, the 1.3 kHz filter.
+            tone_bass_q <= (tone_bass_control_q < 0) ? warm_lp : low;
+            tone_treble_band_q <= sat16_from21(
+                {{5{tone_base_q[15]}}, tone_base_q} -
+                ((tone_treble_control_q < 0) ? {{5{warm_lp[15]}}, warm_lp} :
+                                               {{5{mid_lp[15]}}, mid_lp}));
             tone_warm_q <= sat16_from21({{5{warm_lp[15]}}, warm_lp} -
                                         {{5{low[15]}}, low});
             tone_mid_q <= sat16_from21({{5{mid_lp[15]}}, mid_lp} -
@@ -405,12 +398,21 @@ always_ff @(posedge clk) begin
             tone_volume_control_q <= clamp_audio_control(audio_control[24:20]);
 
             tone_base_ext_q <= {{5{tone_apply_base_q[15]}}, tone_apply_base_q};
-            tone_bass_adjust_q <= tone_band_adjust(tone_bass_q, tone_bass_control_q);
-            tone_warm_adjust_q <= audio_control_adjust(tone_warm_q, tone_warm_control_q);
-            tone_warm_treble_adjust_q <= warmth_treble_adjust(tone_treble_q, tone_warm_control_q);
-            tone_mid_adjust_q <= tone_band_adjust(tone_mid_q, tone_mid_control_q);
-            tone_treble_adjust_q <= tone_band_adjust(tone_treble_q, tone_treble_control_q);
-            tone_volume_adjust_q <= audio_control_adjust(tone_apply_base_q, tone_volume_control_q);
+            tone_bass_gain_q   <= tone_band_gain(tone_bass_control_q);
+            tone_mid_gain_q    <= tone_band_gain(tone_mid_control_q);
+            tone_treble_gain_q <= tone_band_gain(tone_treble_control_q);
+            // Warmth and Volume keep the linear law: 1/8 for each step.
+            tone_warm_gain_q   <= {tone_warm_control_q[4], tone_warm_control_q};
+            tone_volume_gain_q <= {tone_volume_control_q[4], tone_volume_control_q};
+            // Warmth takes away treble: a quarter of the warm adjust value.
+            tone_warm_treble_gain_q <= -{tone_warm_control_q[4], tone_warm_control_q};
+
+            tone_bass_adjust_q <= 21'(tone_bass_product >>> 3);
+            tone_warm_adjust_q <= 21'(tone_warm_product >>> 3);
+            tone_warm_treble_adjust_q <= 21'(tone_warm_treble_product >>> 5);
+            tone_mid_adjust_q <= 21'(tone_mid_product >>> 3);
+            tone_treble_adjust_q <= 21'(tone_treble_product >>> 3);
+            tone_volume_adjust_q <= 21'(tone_volume_product >>> 3);
 
             tone_shaped_q <= tone_base_ext_q +
                              tone_bass_adjust_q +

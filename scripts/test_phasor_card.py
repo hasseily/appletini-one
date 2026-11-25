@@ -169,13 +169,14 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             "phasor_mix_q <= sum4_10(sum_q[0], sum_q[1], sum_q[2], sum_q[3]);" in mix and
             "echo_mix_q <= sum2_10(sum_q[1], sum_q[3]);" in mix and
             "mockingboard_mix_q <= sum2_10(sum_q[0], sum_q[1]);" in mix and
-            "tone_bass_adjust_q <= tone_band_adjust(tone_bass_q, tone_bass_control_q);" in mix and
-            "tone_mid_adjust_q <= tone_band_adjust(tone_mid_q, tone_mid_control_q);" in mix and
-            "tone_volume_adjust_q <= audio_control_adjust(tone_apply_base_q, tone_volume_control_q);" in mix and
-            "tone_warm_adjust_q <= audio_control_adjust(tone_warm_q, tone_warm_control_q);" in mix and
-            "tone_warm_treble_adjust_q <= warmth_treble_adjust(tone_treble_q, tone_warm_control_q);" in mix and
-            "4'd1:    adjusted = widened >>> 3;" in mix and
-            "default: adjusted = widened;" in mix and
+            "tone_bass_gain_q   <= tone_band_gain(tone_bass_control_q);" in mix and
+            "tone_mid_gain_q    <= tone_band_gain(tone_mid_control_q);" in mix and
+            "tone_treble_gain_q <= tone_band_gain(tone_treble_control_q);" in mix and
+            "tone_volume_gain_q <= {tone_volume_control_q[4], tone_volume_control_q};" in mix and
+            "tone_warm_gain_q   <= {tone_warm_control_q[4], tone_warm_control_q};" in mix and
+            "tone_warm_treble_adjust_q <= 21'(tone_warm_treble_product >>> 5);" in mix and
+            "tone_bass_q <= (tone_bass_control_q < 0) ? warm_lp : low;" in mix and
+            "5'sd8:   tone_band_gain = 6'sd24;" in mix and
             "bass_audio_control_adjust" not in mix and
             "tone_shaped_q <= tone_base_ext_q +" in mix and
             "tone_warm_shaped_q <= warm_shape_from21(tone_shaped_q, tone_warm_control_q);" in mix and

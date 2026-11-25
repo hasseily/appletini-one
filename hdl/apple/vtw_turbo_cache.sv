@@ -12,6 +12,11 @@ module vtw_turbo_cache #(
     input  logic        clk,
     input  logic        rstn,
     input  logic        invalidate,
+    // A writer outside the CPU changed the RAM word of drop_addr (an Apple
+    // address below $C000, where the physical offset is the address).
+    // Only that word leaves the caches; no fill is taken in this clock.
+    input  logic        drop,
+    input  logic [15:0] drop_addr,
     input  logic [15:0] addr,
     input  logic        rw,
     output logic        read_valid,
@@ -89,6 +94,7 @@ module vtw_turbo_cache #(
         low_phys_mem[low_snoop_index] == snoop_phys[17:8];
     wire low_fill = byte_fill && !snoop_write && fill_low;
     logic [MAP_COUNT-1:0] map_valid_q;
+    wire block = invalidate || drop;
     logic [WORD_COUNT-1:0] word_valid_q;
 
     // Apple programs often put code and buffers on the same page offset.
@@ -156,9 +162,9 @@ module vtw_turbo_cache #(
     // Fill and snoop are mutually exclusive in the wrapper (a slow read
     // response versus a CPU write), giving the byte array one write port.
     always_ff @(posedge clk) begin
-        if (map_fill && !invalidate)
+        if (map_fill && !block)
             map_mem[fill_map_index] <= {map_addr[15:8], map_fast_write, map_phys[17:8]};
-        if (!invalidate) begin
+        if (!block) begin
             if (byte_fill && !snoop_write && !fill_low)
                 word_tag_mem[fill_index] <= {byte_addr[15:BYTE_INDEX_BITS], byte_phys[17:8]};
             if (low_fill)
@@ -175,7 +181,7 @@ module vtw_turbo_cache #(
     wire [WORD_INDEX_BITS-1:0] data_write_index = snoop_write ? snoop_index : fill_index;
     for (genvar lane = 0; lane < 4; lane++) begin : data_lane
         (* ram_style = "distributed" *) logic [7:0] byte_mem [0:WORD_COUNT-1];
-        wire lane_write = !invalidate &&
+        wire lane_write = !block &&
             (data_fill || (snoop_write && snoop_hit && snoop_addr[1:0] == 2'(lane)));
         wire [7:0] lane_wdata = snoop_write ? snoop_data : word_data[8*lane +: 8];
         assign read_word[8*lane +: 8] = byte_mem[word_index];
@@ -187,7 +193,7 @@ module vtw_turbo_cache #(
         end
 
         (* ram_style = "distributed" *) logic [7:0] low_mem [0:LOW_COUNT-1];
-        wire low_lane_write = !invalidate &&
+        wire low_lane_write = !block &&
             (low_fill || (snoop_write && low_snoop_hit && snoop_addr[1:0] == 2'(lane)));
         assign low_word[8*lane +: 8] = low_mem[low_index];
         always_ff @(posedge clk) begin
@@ -201,6 +207,13 @@ module vtw_turbo_cache #(
             map_valid_q <= '0;
             word_valid_q <= '0;
             low_valid_q <= '0;
+        end
+        else if (drop) begin
+            // Both stores can hold the word only at the place of its own
+            // address, so one valid bit in each is enough.
+            word_valid_q[word_set(drop_addr)] <= 1'b0;
+            if (drop_addr[15:9] == 7'd0)
+                low_valid_q[drop_addr[8:2]] <= 1'b0;
         end
         else begin
             if (map_fill)

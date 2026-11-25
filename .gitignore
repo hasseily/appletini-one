@@ -123,3 +123,6 @@ hdl/sim/*
 !hdl/sim/xpm_fifo_sync_model.sv
 !hdl/sim/vtw_shadow_write_guard_cases.svh
 !hdl/sim/vtw_shadow_write_guard_oracle.svh
+
+# CPU reference test sets (downloaded; see scripts/test_w65c02_turbo.py)
+cpu_tests/

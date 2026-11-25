@@ -33,9 +33,17 @@ def generated_harness(name: str, turbo: bool) -> tuple[str, Path]:
     top = f"{original}_{'turbo' if turbo else 'classic'}"
     text = (ROOT / "hdl" / "sim" / f"{original}.sv").read_text()
     text = replace_once(text, f"module {original};", f"module {top};")
+    # The fast core also gets the two bytes after PC, as the wrapper's
+    # fetch window gives them, so the fused fetch runs in these suites.
+    ahead = (
+        "\n        .ahead_valid(2'b11),"
+        "\n        .ahead_data({memory[16'(debug_pc + 16'd2)],"
+        " memory[16'(debug_pc + 16'd1)]}),"
+        "\n        .fused_bytes(),"
+    ) if turbo else ""
     text = replace_once(
         text, ".ready(ready),",
-        f".ready(ready),\n        .turbo(1'b{int(turbo)}),",
+        f".ready(ready),\n        .turbo(1'b{int(turbo)}),{ahead}",
     )
     if name == "vectors":
         text = replace_once(

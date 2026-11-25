@@ -991,7 +991,11 @@ module tb_vtw_turbo;
         freeze_core();
         sh_check(18'h06001, 8'h22);
         // Change a second instruction operand through the host as well.
+        // The write drops its own cache word and leaves the others.
+        n = $countones(dut.turbo_cache_i.word_valid_q);
         sh_write(18'h06006, 8'h83);
+        check(n > 2 && $countones(dut.turbo_cache_i.word_valid_q) == n - 1,
+              "a host RAM write did not drop exactly its own cache word");
         n = marker_count[0];
         @(negedge clk);
         pause = 1'b0;

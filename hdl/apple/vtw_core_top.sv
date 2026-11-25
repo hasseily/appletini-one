@@ -1285,12 +1285,24 @@ module vtw_core_top (
     // actual translation state discards RAM data; polling I/O remains live.
     // External shadow writes and changes to write-through policy invalidate
     // both caches. No physical I/O, PSRAM, or card response is ever cached.
-    wire turbo_invalidate = !core_res_n ||
-        (sh_en && sh_we) || arm_rw_flush_req ||
+    wire turbo_remap = !core_res_n || arm_rw_flush_req ||
         (speed_mode != turbo_mode_q) || (ramworks_en != turbo_ramworks_q) ||
         (post_main_wide_eff != turbo_post_wide_q) ||
         (overlay_capture_armed != turbo_overlay_q) ||
         (turbo_mapping != turbo_mapping_q);
+    /* A write from outside the CPU (ARM port, copy engine). Below $C000 of
+     * the two RAM banks the physical offset is the Apple address, and no
+     * other address reaches that byte. The caches then drop only the word
+     * that was written. Doom moves its frames this way: with a full flush
+     * for each write it had more flushes than I/O cycles. Other targets
+     * (language card, ROM area) keep the full flush. */
+    wire turbo_ext_write = sh_en && sh_we;
+    wire turbo_ext_plain = turbo_ext_write && !sh_addr[17] &&
+                           sh_addr[15:14] != 2'b11;
+    wire turbo_flush_all = turbo_remap || (turbo_ext_write && !turbo_ext_plain);
+    // For the control logic a dropped word is the same as a flush: no step
+    // completes from cache data in this clock.
+    wire turbo_invalidate = turbo_remap || turbo_ext_write;
     wire turbo_map_fill = (xstate_q == X_ROUTE) && xl_shadow_valid &&
                          core_res_n && cycle_addr_q[15:12] != 4'hC;
     wire turbo_byte_fill = (xstate_q == X_MEM_CAPTURE) && cycle_rw_q &&
@@ -1338,7 +1350,8 @@ module vtw_core_top (
                                  (core_fused_bytes == 2'd1) ? pf_addr_plus1 :
                                                               pf_lookup_addr;
     vtw_turbo_cache #(.BYTE_INDEX_BITS(TURBO_BYTE_INDEX_BITS)) turbo_cache_i (
-        .clk(clk), .rstn(rstn), .invalidate(turbo_invalidate),
+        .clk(clk), .rstn(rstn), .invalidate(turbo_flush_all),
+        .drop(turbo_ext_plain && !turbo_remap), .drop_addr(sh_addr[15:0]),
         .addr(core_addr), .rw(core_rwb),
         .read_valid(turbo_read_valid), .read_tag(turbo_read_tag),
         .write_valid(turbo_write_valid), .write_tag(turbo_write_tag),

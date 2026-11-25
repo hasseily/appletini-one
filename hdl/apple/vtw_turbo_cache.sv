@@ -1,6 +1,7 @@
 `timescale 1ns / 1ps
 // Small, asynchronous TURBO caches. The address table and word cache have
 // independent fills: a store needs only a writable address-table entry.
+// Pages 0 and 1 (zero page and stack) have a separate direct store.
 // All backing writes still commit to the shadow BRAM on the accepting edge.
 // The wrapper invalidates both tables whenever the Apple mapping changes,
 // an external writer touches the shadow, or the execution mode changes.
@@ -54,6 +55,28 @@ module vtw_turbo_cache #(
     (* ram_style = "distributed" *) logic [TAG_BITS+9:0] word_tag_mem [0:WORD_COUNT-1];
     wire [31:0] read_word;
     wire [31:0] read2_word;
+
+    /* Zero page and stack. These two pages hold the working registers of
+     * 6502 code, and in the shared word cache they both miss often and push
+     * code out. Here each word of the two pages has its own place: 128
+     * words, addressed directly, with no eviction. The valid bits and the
+     * invalidation are the same as for the word cache. The physical page of
+     * the fill is kept, so that a write snoops only the bank it was read
+     * from. Code in these pages gets no prefetch. */
+    localparam int LOW_INDEX_BITS = 7;
+    localparam int LOW_COUNT = 1 << LOW_INDEX_BITS;
+    (* ram_style = "distributed" *) logic [9:0] low_phys_mem [0:LOW_COUNT-1];
+    logic [LOW_COUNT-1:0] low_valid_q;
+    wire [31:0] low_word;
+    wire low_page = (addr[15:9] == 7'd0);
+    wire [LOW_INDEX_BITS-1:0] low_index = addr[8:2];
+    wire fill_low = (byte_addr[15:9] == 7'd0);
+    wire snoop_low = (snoop_addr[15:9] == 7'd0);
+    wire [LOW_INDEX_BITS-1:0] low_fill_index = byte_addr[8:2];
+    wire [LOW_INDEX_BITS-1:0] low_snoop_index = snoop_addr[8:2];
+    wire low_snoop_hit = snoop_low && low_valid_q[low_snoop_index] &&
+        low_phys_mem[low_snoop_index] == snoop_phys[17:8];
+    wire low_fill = byte_fill && !snoop_write && fill_low;
     logic [MAP_COUNT-1:0] map_valid_q;
     logic [WORD_COUNT-1:0] word_valid_q;
 
@@ -79,17 +102,22 @@ module vtw_turbo_cache #(
     // need not evict a still-valid byte or add another lookup to read hits.
     // The wrapper captures these raw entries with the request, then checks
     // their tags. Keep the tag comparison after that register boundary.
-    assign read_valid = word_valid_q[word_index];
-    assign read_tag = word_tag[TAG_BITS+9:10];
+    // Pages 0 and 1 have their own store (see below). Its tag is the
+    // address itself: a valid entry is always the byte that was asked for.
+    assign read_valid = low_page ? low_valid_q[low_index]
+                                 : word_valid_q[word_index];
+    assign read_tag = low_page ? addr[15:BYTE_INDEX_BITS]
+                               : word_tag[TAG_BITS+9:10];
     assign write_valid = map_valid_q[map_index];
     assign write_tag = map_entry[18:11];
     assign write_fast = map_entry[10];
-    assign rdata = read_word[8*addr[1:0] +: 8];
+    assign rdata = low_page ? low_word[8*addr[1:0] +: 8]
+                            : read_word[8*addr[1:0] +: 8];
     assign write_phys = {map_entry[9:0], addr[7:0]};
 
     wire [WORD_INDEX_BITS-1:0] word2_index = word_set(addr2);
     wire [TAG_BITS+9:0] word2_tag = word_tag_mem[word2_index];
-    assign read2_valid = word_valid_q[word2_index];
+    assign read2_valid = word_valid_q[word2_index] && addr2[15:9] != 7'd0;
     assign read2_tag = word2_tag[TAG_BITS+9:10];
     assign rdata2 = read2_word[8*addr2[1:0] +: 8];
 
@@ -98,7 +126,7 @@ module vtw_turbo_cache #(
     wire [WORD_INDEX_BITS-1:0] fill_index = word_set(byte_addr);
     // Physical-page identity survives address-table eviction and separate
     // RAMRD/RAMWRT mappings. A write to the other bank leaves this line alone.
-    wire snoop_hit = word_valid_q[snoop_index] &&
+    wire snoop_hit = !snoop_low && word_valid_q[snoop_index] &&
         word_tag_mem[snoop_index] == {snoop_addr[15:BYTE_INDEX_BITS], snoop_phys[17:8]};
 
     // No reset on LUT RAM contents: the separate valid bits own lifetime.
@@ -108,15 +136,19 @@ module vtw_turbo_cache #(
         if (map_fill && !invalidate)
             map_mem[fill_map_index] <= {map_addr[15:8], map_fast_write, map_phys[17:8]};
         if (!invalidate) begin
-            if (byte_fill && !snoop_write)
+            if (byte_fill && !snoop_write && !fill_low)
                 word_tag_mem[fill_index] <= {byte_addr[15:BYTE_INDEX_BITS], byte_phys[17:8]};
+            if (low_fill)
+                low_phys_mem[low_fill_index] <= byte_phys[17:8];
         end
     end
 
     // Give each lane one inferred LUT-RAM write port. Separate arrays and
     // an explicit address mux prevent fill/snoop from becoming two ports
     // on a shared word array and falling back to registers.
-    wire data_fill = byte_fill && !snoop_write;
+    wire data_fill = byte_fill && !snoop_write && !fill_low;
+    wire [LOW_INDEX_BITS-1:0] low_write_index =
+        snoop_write ? low_snoop_index : low_fill_index;
     wire [WORD_INDEX_BITS-1:0] data_write_index = snoop_write ? snoop_index : fill_index;
     for (genvar lane = 0; lane < 4; lane++) begin : data_lane
         (* ram_style = "distributed" *) logic [7:0] byte_mem [0:WORD_COUNT-1];
@@ -129,18 +161,30 @@ module vtw_turbo_cache #(
             if (lane_write)
                 byte_mem[data_write_index] <= lane_wdata;
         end
+
+        (* ram_style = "distributed" *) logic [7:0] low_mem [0:LOW_COUNT-1];
+        wire low_lane_write = !invalidate &&
+            (low_fill || (snoop_write && low_snoop_hit && snoop_addr[1:0] == 2'(lane)));
+        assign low_word[8*lane +: 8] = low_mem[low_index];
+        always_ff @(posedge clk) begin
+            if (low_lane_write)
+                low_mem[low_write_index] <= lane_wdata;
+        end
     end
 
     always_ff @(posedge clk) begin
         if (!rstn || invalidate) begin
             map_valid_q <= '0;
             word_valid_q <= '0;
+            low_valid_q <= '0;
         end
         else begin
             if (map_fill)
                 map_valid_q[fill_map_index] <= 1'b1;
-            if (byte_fill && !snoop_write)
+            if (byte_fill && !snoop_write && !fill_low)
                 word_valid_q[fill_index] <= 1'b1;
+            if (low_fill)
+                low_valid_q[low_fill_index] <= 1'b1;
         end
     end
 endmodule

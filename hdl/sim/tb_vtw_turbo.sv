@@ -748,6 +748,66 @@ module tb_vtw_turbo;
               "RAM benchmark produced an invalid route or dropped write");
     endtask
 
+    // Zero-page variables, the stack, a subroutine and a table read, as in
+    // ordinary 6502 code. The copy benchmarks above have none of these.
+    task automatic zero_page_benchmark(output integer cold_clocks,
+                                       output integer hot_clocks);
+        integer started;
+        integer warmed;
+        begin_program(2'd3);
+        for (int i = 0; i < 16; i++)
+            sh_write(18'h09200 + 18'(i), 8'(i * 5 + 1));
+        for (int i = 16; i < 24; i++)
+            sh_write(18'(i), 8'h00);
+        immediate(8'hA2, 8'h00);       // F000 LDX #0
+        absolute(8'hBD, 16'h9200);    // F002 loop: LDA $9200,X
+        immediate(8'h85, 8'h10);       //      STA $10
+        emit(8'h18);                  //      CLC
+        immediate(8'h65, 8'h12);       //      ADC $12
+        immediate(8'h85, 8'h12);       //      STA $12
+        immediate(8'hA5, 8'h13);       //      LDA $13
+        immediate(8'h69, 8'h00);       //      ADC #0
+        immediate(8'h85, 8'h13);       //      STA $13
+        emit(8'h48);                  //      PHA
+        absolute(8'h20, 16'hF02F);    //      JSR sub
+        emit(8'h68);                  //      PLA
+        immediate(8'hE6, 8'h14);       //      INC $14
+        emit(8'hE8);                  //      INX
+        immediate(8'hE0, 8'h10);       //      CPX #16
+        immediate(8'hD0, 8'hE4);       //      BNE loop
+        absolute(8'hEE, 16'hA100);    // F01E INC completion marker
+        immediate(8'hE6, 8'h15);       //      INC $15
+        immediate(8'hA5, 8'h15);       //      LDA $15
+        immediate(8'hC9, 8'h0C);       //      CMP #12
+        immediate(8'hF0, 8'h03);       //      BEQ done
+        absolute(8'h4C, 16'hF000);
+        absolute(8'h4C, 16'hF02C);    // F02C done: JMP done
+        immediate(8'hA5, 8'h10);       // F02F sub: LDA $10
+        immediate(8'h45, 8'h11);       //      EOR $11
+        immediate(8'h85, 8'h11);       //      STA $11
+        emit(8'h60);                  //      RTS
+        start_program();
+        started = fabric_cycles;
+        wait_marker(0, 1);
+        cold_clocks = marker_cycle[0] - started;
+        wait_marker(0, 3);
+        warmed = marker_cycle[0];
+        wait_marker(0, 11);
+        hot_clocks = (marker_cycle[0] - warmed) / 8;
+        // The program stops itself after pass 12.
+        wait_marker(0, 12);
+        repeat (400) @(posedge clk);
+        freeze_core();
+        // Twelve passes: 192 loop turns, each adds one table byte.
+        sh_check(18'h00010, 8'(15 * 5 + 1));
+        sh_check(18'h00014, 8'(192));
+        sh_check(18'h00015, 8'd12);
+        sh_check(18'h00012, 8'(12 * 616));
+        sh_check(18'h00013, 8'((12 * 616) >> 8));
+        check(cnt_invalid_routes == 0 && cnt_post_drops == 0,
+              "zero-page benchmark produced an invalid route or dropped write");
+    endtask
+
     task automatic coherency_program;
         integer n;
         integer core_before;
@@ -853,6 +913,9 @@ module tb_vtw_turbo;
         absolute(8'h8D, 16'hC009);     // ALTZP on
         immediate(8'hA5, 8'h20);
         absolute(8'h8D, 16'hA104);
+        // A store to the aux zero page must not show in the main one.
+        immediate(8'hA9, 8'h5C);
+        immediate(8'h85, 8'h20);
         absolute(8'h8D, 16'hC008);     // ALTZP off
         immediate(8'hA5, 8'h20);
         absolute(8'h8D, 16'hA105);
@@ -897,6 +960,8 @@ module tb_vtw_turbo;
               marker_value[8] == 8'h77, "independent read/write mapping lost a store");
         sh_check(18'h09000, 8'h77);
         sh_check(18'h19000, 8'h66);
+        sh_check(18'h00020, 8'h33);
+        sh_check(18'h10020, 8'h5C);
     endtask
 
     task automatic selfmod_program;
@@ -1732,6 +1797,7 @@ module tb_vtw_turbo;
 `else
     integer max_cold, max_hot, turbo_cold, turbo_hot;
     integer alt_max_cold, alt_max_hot, alt_turbo_cold, alt_turbo_hot;
+    integer zp_cold, zp_hot;
     initial begin
         benchmark(2'd0, 16'h9000, max_cold, max_hot);
         benchmark(2'd3, 16'h9000, turbo_cold, turbo_hot);
@@ -1749,6 +1815,9 @@ module tb_vtw_turbo;
         $display("VTW TURBO SPEED $9080: MAX cold/hot=%0d/%0d clocks; TURBO=%0d/%0d; hot ratio=%0.2f",
                  alt_max_cold, alt_max_hot, alt_turbo_cold, alt_turbo_hot,
                  real'(alt_max_hot) / real'(alt_turbo_hot));
+        zero_page_benchmark(zp_cold, zp_hot);
+        $display("VTW TURBO SPEED zero page: TURBO cold/hot=%0d/%0d clocks",
+                 zp_cold, zp_hot);
         coherency_program();
         bank_program();
         ramworks_program();

@@ -1248,6 +1248,78 @@ void vtw_service_poll(void)
     }
 }
 
+/* "vtw perf": speed of the TURBO core between two calls. The counters in
+ * the FPGA are 32 bits wide and the fabric counter wraps in 32 s, so the
+ * figures use the difference of two samples that are less than 30 s apart.
+ * The command does not wait: the first call takes a sample, the next call
+ * prints the figures for the time between the two and takes a new sample. */
+void vtw_service_uart_perf(uint32_t uart_base)
+{
+    static uint32_t prev[9];
+    static XTime prev_time;
+    static uint8_t have_prev;
+    uint32_t now[9];
+    uint32_t d[9];
+    XTime t;
+    uint64_t ms;
+    char line[96];
+
+    for (uint32_t n = 0U; n < 8U; ++n) {
+        now[n] = REG_READ(CARD_CTRL_TURBO_PERF_REG(n));
+    }
+    now[8] = REG_READ(CARD_CTRL_TURBO_PREFETCH_REG);
+    XTime_GetTime(&t);
+    ms = (have_prev != 0U)
+        ? (uint64_t)(t - prev_time) / (COUNTS_PER_SECOND / 1000U) : 0U;
+    for (uint32_t n = 0U; n < 9U; ++n) {
+        d[n] = now[n] - prev[n];          /* right through one wrap */
+        prev[n] = now[n];
+    }
+    prev_time = t;
+
+    if (have_prev == 0U || ms < 200U || ms > 30000U) {
+        have_prev = 1U;
+        uart_puts(uart_base,
+                  "vtw perf: sample taken; type it again in 1 to 30 s\r\n");
+        return;
+    }
+    /* d: 0 fabric clocks, 1 steps, 2 classic cycles, 3 cache completions
+     * (with prefetch), 4 misses, 6 disk wait, 7 video wait, 8 prefetch. */
+    if (d[0] == 0U || d[1] == 0U) {
+        uart_puts(uart_base, "vtw perf: the core did not run\r\n");
+        return;
+    }
+    {
+        /* 133.333 MHz fabric clock: MHz x 10 = classic x 4000 / (3 x clocks) */
+        uint32_t waits = d[6] + d[7];
+        uint32_t busy = (d[0] > waits) ? (d[0] - waits) : 1U;
+        uint32_t mhz_all = (uint32_t)(((uint64_t)d[2] * 4000U) / (3ULL * d[0]));
+        uint32_t mhz_cpu = (uint32_t)(((uint64_t)d[2] * 4000U) / (3ULL * busy));
+        uint32_t lookup = (d[3] > d[8]) ? (d[3] - d[8]) : 0U;
+
+        snprintf(line, sizeof(line),
+                 "vtw perf: %lu ms: %lu.%lu MHz with waits, %lu.%lu MHz pure CPU\r\n",
+                 (unsigned long)ms,
+                 (unsigned long)(mhz_all / 10U), (unsigned long)(mhz_all % 10U),
+                 (unsigned long)(mhz_cpu / 10U), (unsigned long)(mhz_cpu % 10U));
+        uart_puts(uart_base, line);
+        snprintf(line, sizeof(line),
+                 "vtw perf: steps: prefetch %lu%% cache %lu%% miss %lu%% other %lu%%\r\n",
+                 (unsigned long)(((uint64_t)d[8] * 100U) / d[1]),
+                 (unsigned long)(((uint64_t)lookup * 100U) / d[1]),
+                 (unsigned long)(((uint64_t)d[4] * 100U) / d[1]),
+                 (unsigned long)(((uint64_t)(d[1] - ((d[3] + d[4] <= d[1]) ? (d[3] + d[4]) : d[1])) * 100U) / d[1]));
+        uart_puts(uart_base, line);
+        snprintf(line, sizeof(line),
+                 "vtw perf: time: video wait %lu%% disk wait %lu%%, %lu.%02lu cycles per step\r\n",
+                 (unsigned long)(((uint64_t)d[7] * 100U) / d[0]),
+                 (unsigned long)(((uint64_t)d[6] * 100U) / d[0]),
+                 (unsigned long)(d[2] / d[1]),
+                 (unsigned long)((((uint64_t)d[2] * 100U) / d[1]) % 100U));
+        uart_puts(uart_base, line);
+    }
+}
+
 void vtw_service_uart_status(uint32_t uart_base)
 {
     char line[96];

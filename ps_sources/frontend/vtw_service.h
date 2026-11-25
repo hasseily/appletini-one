@@ -108,6 +108,8 @@ uint8_t vtw_service_onee_running(void);
 
 void vtw_service_poll(void);
 void vtw_service_uart_status(uint32_t uart_base);
+/* Speed of the TURBO core between two calls of the command. */
+void vtw_service_uart_perf(uint32_t uart_base);
 
 /* Hex-dump `len` bytes of the shadow (18-bit physical space: $00000 main,
  * $10000 aux, $20000 ROM copy at $C000-based offsets) over the UART.

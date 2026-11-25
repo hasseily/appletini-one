@@ -1722,6 +1722,7 @@ void uart_control_print_help(const uart_control_t *control, const uart_control_o
         "  pct [status]\r\n"
         "  vtw [status|on|off] | vtw speed <full|turbo|1mhz|div <2-255>>\r\n"
         "  vtw fuse [on|off]   TURBO fused fetch, for tests (not saved)\r\n"
+        "  vtw perf            CPU speed between two calls (1 to 30 s apart)\r\n"
         "  vtw dump <hex-phys> [hex-len]\r\n"
         "  ss [on|off|force <on|off>|dump]\r\n"
         "Bus diagnostics:\r\n"
@@ -2435,6 +2436,10 @@ static uart_control_event_t process_command(
                           enable ? "vtw: on (saved)\r\n" :
                                    "vtw: off (saved); CTRL-RESET the Apple\r\n");
             }
+            return event;
+        }
+        if (str_ieq(argv[1], "perf")) {
+            vtw_service_uart_perf(control->control_uart_base);
             return event;
         }
         if (str_ieq(argv[1], "fuse")) {

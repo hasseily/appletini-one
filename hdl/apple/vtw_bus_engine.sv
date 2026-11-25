@@ -472,6 +472,14 @@ module vtw_bus_engine #(
                               ab_read.data[7];
     assign dbg_bad_c000_pulse = dbg_bad_c000_event &&
                                 !dbg_io_trace_frozen_q;
+    // The three debug counters count one fabric clock after the event, so
+    // the live address and data compares do not feed their clock enables.
+    logic dbg_count_addr_q, dbg_count_self_q, dbg_count_dma_q;
+    always_ff @(posedge clk) begin
+        dbg_count_addr_q <= dbg_sync_complete && dbg_addr_bad;
+        dbg_count_self_q <= dbg_sync_complete && dbg_self_data_bad;
+        dbg_count_dma_q  <= dbg_sync_complete && ab_read.dma;
+    end
 
     assign sync_req_ready  = (session_q == S_RUN) && enable &&
                              !sync_pending_q && ab_read.res;
@@ -528,18 +536,16 @@ module vtw_bus_engine #(
                     sync_addr_q,
                     ab_read.data
                 };
+            end
 
-                if (dbg_addr_bad && dbg_addr_mismatch_q != 16'hFFFF) begin
-                    dbg_addr_mismatch_q <= dbg_addr_mismatch_q + 16'd1;
-                end
-                if (dbg_self_data_bad &&
-                    dbg_self_data_mismatch_q != 8'hFF) begin
-                    dbg_self_data_mismatch_q <=
-                        dbg_self_data_mismatch_q + 8'd1;
-                end
-                if (ab_read.dma && dbg_dma_released_q != 8'hFF) begin
-                    dbg_dma_released_q <= dbg_dma_released_q + 8'd1;
-                end
+            if (dbg_count_addr_q && dbg_addr_mismatch_q != 16'hFFFF) begin
+                dbg_addr_mismatch_q <= dbg_addr_mismatch_q + 16'd1;
+            end
+            if (dbg_count_self_q && dbg_self_data_mismatch_q != 8'hFF) begin
+                dbg_self_data_mismatch_q <= dbg_self_data_mismatch_q + 8'd1;
+            end
+            if (dbg_count_dma_q && dbg_dma_released_q != 8'hFF) begin
+                dbg_dma_released_q <= dbg_dma_released_q + 8'd1;
             end
 
             if (dbg_trace_freeze || dbg_bad_c000_event) begin

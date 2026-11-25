@@ -55,7 +55,12 @@ module ssi263_native_tract #(
     logic [3:0] step_q;
     localparam logic [3:0] LOAD=0, MUL=1, PARTIAL=2, SUM=3, ROUND=4, RECIP=5,
         QPLUS=6, CORRECT=7, RESOLVE=8, COMMIT=9, RETIRE=10;
-    logic signed [24:0] operand [0:5], operand_q [0:5];
+    // Each multiply lane takes minuend - subtrahend. The two values are
+    // selected first and the one subtraction is made in the multiplier
+    // block (its 25-bit adder in front of the multiplier).
+    logic signed [24:0] minuend [0:5], minuend_q [0:5];
+    logic signed [24:0] subtrahend [0:5], subtrahend_q [0:5];
+    logic signed [24:0] operand_q [0:5];
     logic signed [15:0] coefficient [0:5], coefficient_q [0:5];
     logic signed [40:0] product_q [0:5];
     logic signed [47:0] partial_q [0:2];
@@ -119,109 +124,126 @@ module ssi263_native_tract #(
     // Operand selection uses only settled event/charge registers. The six
     // products are summed before a single nearest-away rounding operation.
     always_comb begin
-        for (integer k=0; k<6; k=k+1) begin operand[k]=0; coefficient[k]=0; end
+        for (integer k=0; k<6; k=k+1) begin minuend[k]=0; subtrahend[k]=0; coefficient[k]=0; end
         denominator = 14'd1;
         case (stage_q)
             0: begin
                 denominator=3900;
-                if (phi0_edge_q) begin operand[0]=25'(fric2_shape_q); coefficient[0]=3600; end
-                else if (phi1_edge_q) begin operand[0]=25'(fric2_source_q); coefficient[0]=-3600; end
+                // A lane with a zero coefficient gives zero for any operand,
+                // so the operand selects do not need the lane conditions.
+                minuend[0]=phi0_edge_q ? 25'(fric2_shape_q) : 25'(fric2_source_q);
+                if (phi0_edge_q) coefficient[0]=3600;
+                else if (phi1_edge_q) coefficient[0]=-3600;
             end
-            1: begin denominator=3900; operand[0]=25'(phase_delta_q); coefficient[0]=-5700; end
+            1: begin denominator=3900; minuend[0]=25'(phase_delta_q); coefficient[0]=-5700; end
             2: begin
                 denominator=3900;
-                operand[0]=25'(fric_drive_q)-25'(old_fric_q);
+                minuend[0]=25'(fric_drive_q); subtrahend[0]=25'(old_fric_q);
                 coefficient[0]=-$signed({2'b0,cap_sum(codes_q[31:28],2)});
             end
             3: begin
-                denominator=3900; operand[0]=25'(edge_delta_q);
+                denominator=3900; minuend[0]=25'(edge_delta_q);
                 coefficient[0]=phase_q ? -9300 : -5700;
             end
+            // The six products are added without rounding, so a term may use
+            // any lane. Lanes 1 to 4 take the terms that have one common
+            // minuend (or none); a term X alone is 0 - X with the coefficient
+            // negated. Lanes 0 and 5 take the other differences.
             4: begin
                 denominator=phase_q ? 3300 : 3900;
                 for (integer k=0; k<4; k=k+1) begin
-                    if (phase_q && codes_q[24+k]) begin
-                        operand[k]=$signed(voice_drive_q)-$signed(voice_plates[k]); coefficient[k]=cap(0,k);
-                    end else if (!phase_q && codes_q[28+k]) begin
-                        operand[k]=25'(fric_drive_q)-$signed(fric1_plates[k]); coefficient[k]=cap(1,k);
-                    end
+                    minuend[k+1]=phase_q ? 25'($signed(voice_drive_q)) : 25'(fric_drive_q);
+                    subtrahend[k+1]=phase_q ? 25'($signed(voice_plates[k])) : 25'($signed(fric1_plates[k]));
+                    if (phase_q && codes_q[24+k]) coefficient[k+1]=cap(0,k);
+                    else if (!phase_q && codes_q[28+k]) coefficient[k+1]=cap(1,k);
                 end
             end
             5: begin
+                minuend[0]=phase_q ? (phi1_edge_q ? 25'($signed(f_y[0])) : 25'($signed(voice_q))) :
+                                     25'($signed(f_y[1]));
+                subtrahend[0]=phase_q ? (phi1_edge_q ? 25'($signed(voice_q)) : 25'($signed(old_voice_q))) :
+                                        25'($signed(f_y[0]));
+                subtrahend[1]=phase_q ? 25'($signed(f_p[0])) : 25'($signed(f2q_plates[0]));
+                subtrahend[2]=phase_q ? 25'($signed(voice_q)) : 25'($signed(f2q_plates[1]));
+                subtrahend[3]=25'($signed(f2q_plates[2]));
+                subtrahend[4]=25'($signed(f2q_plates[3]));
+                minuend[5]=25'($signed(f_p[1]));
                 if (phase_q) begin
                     denominator=11700;
                     if (phi1_edge_q) begin
-                        operand[0]=25'(f_p[0]); coefficient[0]=11500;
-                        operand[1]=$signed(f_y[0])-$signed(voice_q); coefficient[1]=2700;
-                        operand[2]=25'(voice_q); coefficient[2]=-2700;
-                    end else begin operand[0]=$signed(voice_q)-$signed(old_voice_q); coefficient[0]=-5400; end
+                        coefficient[0]=2700; coefficient[1]=-11500; coefficient[2]=2700;
+                    end else coefficient[0]=-5400;
                 end else if (phi0_edge_q) begin
                     denominator=7000+cap_sum(codes_q[11:8],0);
-                    operand[0]=25'(f_p[1]); coefficient[0]=6800;
-                    operand[1]=$signed(f_y[1])-$signed(f_y[0]); coefficient[1]=4700;
-                    for (integer k=0; k<4; k=k+1) if (codes_q[8+k]) begin
-                        operand[k+2]=25'(f2q_plates[k]); coefficient[k+2]=cap(0,k);
-                    end
+                    coefficient[5]=6800;
+                    coefficient[0]=4700;
+                    for (integer k=0; k<4; k=k+1) if (codes_q[8+k]) coefficient[k+1]=-cap(0,k);
                 end else if (new_f2q != 0) begin
                     denominator=7000+cap_sum(codes_q[11:8],0);
-                    operand[0]=25'(f_p[1]); coefficient[0]=$signed({2'b0,14'd7000+cap_sum(keep_f2q,0)});
-                    for (integer k=0; k<4; k=k+1) if (new_f2q[k]) begin
-                        operand[k+1]=25'(f2q_plates[k]); coefficient[k+1]=cap(0,k);
-                    end
+                    coefficient[5]=$signed({2'b0,14'd7000+cap_sum(keep_f2q,0)});
+                    for (integer k=0; k<4; k=k+1) if (new_f2q[k]) coefficient[k+1]=-cap(0,k);
                 end
             end
             6: begin
                 denominator=phase_q ? 11500 : 6800;
-                operand[0]=phase_q ? $signed(f_p[0])-$signed(f_fixed[0]) : $signed(f_p[1])-$signed(f_fixed[1]);
+                minuend[0]=phase_q ? 25'($signed(f_p[0])) : 25'($signed(f_p[1]));
+                subtrahend[0]=phase_q ? 25'($signed(f_fixed[0])) : 25'($signed(f_fixed[1]));
                 coefficient[0]=phase_q ? 250 : 500;
                 for (integer k=0; k<4; k=k+1) begin
-                    if (phase_q && codes_q[k]) begin operand[k+1]=$signed(f_p[0])-$signed(f_plates[0][k]); coefficient[k+1]=cap(3,k); end
-                    else if (!phase_q && codes_q[4+k]) begin operand[k+1]=$signed(f_p[1])-$signed(f_plates[1][k]); coefficient[k+1]=cap(4,k); end
+                    minuend[k+1]=phase_q ? 25'($signed(f_p[0])) : 25'($signed(f_p[1]));
+                    subtrahend[k+1]=phase_q ? 25'($signed(f_plates[0][k])) : 25'($signed(f_plates[1][k]));
+                    if (phase_q && codes_q[k]) coefficient[k+1]=cap(3,k);
+                    else if (!phase_q && codes_q[4+k]) coefficient[k+1]=cap(4,k);
                 end
-                if (!phase_q && route1_q) begin operand[5]=$signed(c143_plate_q)-$signed(fric1_q); coefficient[5]=-1000; end
+                minuend[5]=25'($signed(c143_plate_q)); subtrahend[5]=25'($signed(fric1_q));
+                if (!phase_q && route1_q) coefficient[5]=-1000;
             end
             7: begin
+                minuend[0]=phase_q ? 25'($signed(f_y[2])) : 25'($signed(f_y[3]));
+                subtrahend[0]=phase_q ? 25'($signed(f_y[1])) : 25'($signed(f_y[2]));
+                subtrahend[1]=phase_q ? 25'($signed(f_p[2])) : 25'($signed(f_p[3]));
+                minuend[5]=25'($signed(old_f1_q)); subtrahend[5]=25'($signed(f_y[0]));
                 if (phase_q) begin
                     denominator=4900;
-                    operand[2]=$signed(old_f1_q)-$signed(f_y[0]); coefficient[2]=2000;
-                    if (phi1_edge_q) begin
-                        operand[0]=25'(f_p[2]); coefficient[0]=4700;
-                        operand[1]=$signed(f_y[2])-$signed(f_y[1]); coefficient[1]=3900;
-                    end
+                    coefficient[5]=2000;
+                    if (phi1_edge_q) begin coefficient[1]=-4700; coefficient[0]=3900; end
                 end else if (phi0_edge_q) begin
-                    denominator=4500; operand[0]=25'(f_p[3]); coefficient[0]=4300;
-                    operand[1]=$signed(f_y[3])-$signed(f_y[2]); coefficient[1]=4700;
+                    denominator=4500; coefficient[1]=-4300; coefficient[0]=4700;
                 end
             end
             8: begin
                 denominator=phase_q ? 4700 : 4300;
-                operand[0]=phase_q ? $signed(f_p[2])-$signed(f_fixed[2]) : $signed(f_p[3])-$signed(f_fixed[3]);
+                minuend[0]=phase_q ? 25'($signed(f_p[2])) : 25'($signed(f_p[3]));
+                subtrahend[0]=phase_q ? 25'($signed(f_fixed[2])) : 25'($signed(f_fixed[3]));
                 coefficient[0]=phase_q ? 820 : 1670;
                 for (integer k=0; k<4; k=k+1) begin
-                    if (phase_q && codes_q[12+k]) begin operand[k+1]=$signed(f_p[2])-$signed(f_plates[2][k]); coefficient[k+1]=cap(5,k); end
-                    else if (!phase_q && codes_q[16+k]) begin operand[k+1]=$signed(f_p[3])-$signed(f_plates[3][k]); coefficient[k+1]=cap(6,k); end
+                    minuend[k+1]=phase_q ? 25'($signed(f_p[2])) : 25'($signed(f_p[3]));
+                    subtrahend[k+1]=phase_q ? 25'($signed(f_plates[2][k])) : 25'($signed(f_plates[3][k]));
+                    if (phase_q && codes_q[12+k]) coefficient[k+1]=cap(5,k);
+                    else if (!phase_q && codes_q[16+k]) coefficient[k+1]=cap(6,k);
                 end
             end
             9: begin
                 denominator=3730;
-                operand[2]=25'(c150_delta_q); coefficient[2]=-1150;
-                operand[3]=c151_delta_q; coefficient[3]=-3700;
-                if (phi1_edge_q) begin
-                    operand[0]=25'(f_p[4]); coefficient[0]=3450;
-                    operand[1]=$signed(f_y[4])-$signed(f_y[3]); coefficient[1]=4700;
-                end
+                minuend[0]=25'($signed(f_y[4])); subtrahend[0]=25'($signed(f_y[3]));
+                subtrahend[1]=25'($signed(f_p[4]));
+                subtrahend[2]=25'(c150_delta_q); coefficient[2]=1150;
+                subtrahend[3]=25'(c151_delta_q); coefficient[3]=3700;
+                if (phi1_edge_q) begin coefficient[1]=-3450; coefficient[0]=4700; end
             end
-            10: begin denominator=3450; operand[0]=$signed(f_p[4])-$signed(f_fixed[4]); coefficient[0]=4700; end
+            10: begin denominator=3450; minuend[0]=25'($signed(f_p[4])); subtrahend[0]=25'($signed(f_fixed[4])); coefficient[0]=4700; end
             11: begin
                 denominator=2750;
-                if (phi1_edge_q) begin operand[0]=25'(output_q); coefficient[0]=2700; end
-                for (integer k=0; k<4; k=k+1) if (codes_q[20+k]) begin
-                    operand[k+1]=$signed(f_y[4])-$signed(filter_plates[k]);
-                    coefficient[k+1]=phi1_edge_q ? -cap(7,k) : cap(7,k);
+                minuend[0]=25'(output_q);
+                if (phi1_edge_q) coefficient[0]=2700;
+                for (integer k=0; k<4; k=k+1) begin
+                    minuend[k+1]=25'($signed(f_y[4])); subtrahend[k+1]=25'($signed(filter_plates[k]));
+                    if (codes_q[20+k]) coefficient[k+1]=phi1_edge_q ? -cap(7,k) : cap(7,k);
                 end
             end
             default: begin end
         endcase
+        for (integer k=0; k<6; k=k+1) operand_q[k]=minuend_q[k]-subtrahend_q[k];
         sum=0;
         for (integer k=0; k<3; k=k+1) sum=sum+partial_q[k];
     end
@@ -333,7 +355,10 @@ module ssi263_native_tract #(
             end else if (busy) begin
                 case (step_q)
                     LOAD: begin
-                        for (i=0;i<6;i=i+1) begin operand_q[i]<=operand[i]; coefficient_q[i]<=coefficient[i]; end
+                        for (i=0;i<6;i=i+1) begin
+                            minuend_q[i]<=minuend[i]; subtrahend_q[i]<=subtrahend[i];
+                            coefficient_q[i]<=coefficient[i];
+                        end
                         update_base_q<=update_base; update_subtract_q<=update_subtract;
                         denominator_q<=denominator; step_q<=MUL;
                     end

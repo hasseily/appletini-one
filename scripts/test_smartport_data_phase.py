@@ -32,6 +32,9 @@ def extract_adapter(text: str, name: str) -> str:
     output globals::AppleBus_read smartport_ab_read
 );
     globals::AppleBus_read data_phase_ab_read;
+    // In the top level the saved flag is equal to the live flag in every
+    // clock but the addr_en clock. The bench changes the flag between cycles.
+    wire vtw_smartport_visible_q = vtw_smartport_visible;
     // This equivalence bench covers default physical and private routing.
     // The live GS permissions run through the IIgs slot-policy bench.
 {permission_type}

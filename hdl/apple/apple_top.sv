@@ -2037,13 +2037,23 @@ module apple_top(
     logic [22:0] vtw_sp_sss_snapshot;
 
     globals::AppleBus_read smartport_ab_read;
+    globals::AppleBus_read smartport_late_ab_read;
     always_comb begin
+        smartport_late_ab_read = gate_slot_ab(slot7_devsel_ab_read,
+            vtw_smartport_visible_q || slot7_overlay_devsel_visible, 8'h80, iigs_bus_permissions);
         smartport_ab_read = gate_slot_ab(slot7_devsel_ab_read,
             vtw_smartport_visible || slot7_overlay_devsel_visible, 8'h80, iigs_bus_permissions);
         // SmartPort and overlay write bytes are consumed only at data_en.
         // Use the already captured virtual byte to avoid the live reply mux.
         smartport_ab_read.data = data_phase_ab_read.data;
-        if (!vtw_smartport_visible) begin
+        // The bus gives one strobe in a clock, so sss_en, serve_en and
+        // data_en never come with addr_en. For them the visible choice is
+        // always the saved one; this keeps the addr_en select out of the
+        // path to the SmartPort decoders.
+        smartport_ab_read.sss_en   = smartport_late_ab_read.sss_en;
+        smartport_ab_read.serve_en = smartport_late_ab_read.serve_en;
+        smartport_ab_read.data_en  = smartport_late_ab_read.data_en;
+        if (!vtw_smartport_visible_q) begin
             // Only selected C0F I/O may reach the independent text overlay.
             // Keep addr_en so a stale reply clears at the next address.
             smartport_ab_read.sss_en = 1'b0;

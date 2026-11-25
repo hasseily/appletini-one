@@ -75,10 +75,19 @@ module apple_virtual_bus #(
 
     assign data_phase_data = cycle_data_q;
 
-    wire phase_drive = (phase_q == PHASE_WIDTH'(DRIVE_CLK));
-    wire phase_addr  = (phase_q == PHASE_WIDTH'(ADDR_CLK));
-    wire phase_sss   = (phase_q == PHASE_WIDTH'(SSS_CLK));
-    wire phase_serve = (phase_q == PHASE_WIDTH'(SERVE_CLK));
+    // The phase strobes are registers, decoded from the next phase value.
+    // Each is equal to its compare of phase_q, without the compare logic in
+    // front of every card decoder.
+    logic phase_drive_q;
+    logic phase_addr_q;
+    logic phase_sss_q;
+    logic phase_serve_q;
+    logic phase_phi0_q;
+    logic [PHASE_WIDTH-1:0] phase_next;
+    wire phase_drive = phase_drive_q;
+    wire phase_addr  = phase_addr_q;
+    wire phase_sss   = phase_sss_q;
+    wire phase_serve = phase_serve_q;
     wire phase_data  = phase_data_q;
     wire phase_capture = phase_q == PHASE_WIDTH'(DATA_CLK - 1);
     assign data_capture_wait = ENABLE_DATA_CAPTURE_HOLD && phase_capture &&
@@ -111,6 +120,19 @@ module apple_virtual_bus #(
                                  !cycle_slot_master_q) ?
                                     cpu_wdata_q : floating_bus_data;
 
+    always_comb begin
+        phase_next = phase_q;
+        // Use >= so a PAL-to-NTSC switch during private RESET also
+        // recovers cleanly when the old phase was the PAL-only last tick.
+        if (!data_capture_wait) begin
+            if (phase_q >= (cycle_clks - PHASE_WIDTH'(1))) begin
+                phase_next = '0;
+            end else begin
+                phase_next = phase_q + PHASE_WIDTH'(1);
+            end
+        end
+    end
+
     // Do not start a CPU cycle while reset, RDY, or DMA holds the processor.
     // A pending RDY-stalled request also blocks the single-entry interface.
     always_comb begin
@@ -129,7 +151,7 @@ module apple_virtual_bus #(
         ab_read.data        = phase_data_q ? cycle_data_q : bus_data_live;
         ab_read.addr        = cycle_addr_q;
         ab_read.rw          = cycle_rw_q;
-        ab_read.phi0        = (phase_q >= PHASE_WIDTH'(PHI0_RISE_CLK));
+        ab_read.phi0        = phase_phi0_q;
         ab_read.m2sel       = 1'b0;
         ab_read.m2b0        = 1'b0;
         ab_read.cycle_valid = 1'b1;
@@ -152,6 +174,11 @@ module apple_virtual_bus #(
     always_ff @(posedge clk) begin
         if (!resetn) begin
             phase_q      <= '0;
+            phase_drive_q <= 1'b0;
+            phase_addr_q  <= 1'b0;
+            phase_sss_q   <= 1'b0;
+            phase_serve_q <= 1'b0;
+            phase_phi0_q  <= 1'b0;
             cpu_cycle_q  <= 1'b0;
             cpu_addr_q   <= 16'hFFFF;
             cpu_rw_q     <= 1'b1;
@@ -167,15 +194,12 @@ module apple_virtual_bus #(
             resp_valid <= 1'b0;
             phase_data_q <= capture_data;
 
-            // Use >= so a PAL-to-NTSC switch during private RESET also
-            // recovers cleanly when the old phase was the PAL-only last tick.
-            if (!data_capture_wait) begin
-                if (phase_q >= (cycle_clks - PHASE_WIDTH'(1))) begin
-                    phase_q <= '0;
-                end else begin
-                    phase_q <= phase_q + PHASE_WIDTH'(1);
-                end
-            end
+            phase_q       <= phase_next;
+            phase_drive_q <= (phase_next == PHASE_WIDTH'(DRIVE_CLK));
+            phase_addr_q  <= (phase_next == PHASE_WIDTH'(ADDR_CLK));
+            phase_sss_q   <= (phase_next == PHASE_WIDTH'(SSS_CLK));
+            phase_serve_q <= (phase_next == PHASE_WIDTH'(SERVE_CLK));
+            phase_phi0_q  <= (phase_next >= PHASE_WIDTH'(PHI0_RISE_CLK));
 
             // Resolve the current owner once per fabric clock after drive_en,
             // then freeze the tuple before addr_en. This gives registered bus

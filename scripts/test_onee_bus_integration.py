@@ -175,16 +175,18 @@ def static_checks() -> None:
         "        card_slot6_bus_enable &&\n"
         "        (onee_enable_effective || disk2_active_timing_q);" in top and
         ".ab_read(gate_slot_ab(data_phase_ab_read, disk2_card_enabled, 8'h40, iigs_bus_permissions))" in top and
-        "assign vtw_disk2_active = !onee_enable_effective" in top,
+        "assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&" in top and
+        "                              (onee_enable_effective ||\n"
+        "                               disk2_active_timing_q) &&" in top,
         "ONE//e must gate Disk II input while keeping physical output policy stable",
     )
     require(
         "(onee_enable_effective || smartport_active)" in top and
         "onee_slot7_cards_visible" in top and
-        "!onee_enable_effective && vtw_smartport_visible" in top and
+        "wire         vtw_sp_active = vtw_smartport_visible;" in top and
         "!onee_enable_effective && vtw_disk2_boot_scan_q" in top and
         ".sp_boot_suppress(vtw_sp_boot_suppress)" in top,
-        "ONE//e SmartPort must use selected slot visibility on the synthetic bus",
+        "ONE//e SmartPort must use the selected slot visibility on both ports",
     )
 
     require(
@@ -240,6 +242,9 @@ def main() -> int:
         shutil.rmtree(OUT_DIR)
     OUT_DIR.mkdir(parents=True)
     shutil.copy2(ROOT / "hdl" / "apple" / "disk2_slot6.mem", OUT_DIR)
+    for name in ("smartport_a2retronet_style_c700.mem",
+                 "smartport_a2retronet_style_c800.mem"):
+        shutil.copy2(ROOT / "hdl" / "apple" / name, OUT_DIR)
 
     sources = [
         "hdl/globals.sv",
@@ -261,6 +266,8 @@ def main() -> int:
         "hdl/apple/vtw_video_bank_sync.sv",
         "hdl/apple/vtw_core_top.sv",
         "hdl/apple/disk2_card.sv",
+        "hdl/apple/linear_text_overlay_card.sv",
+        "hdl/apple/smartport_card.sv",
         "hdl/sim/tb_onee_joined_bus.sv",
     ]
     run(

@@ -278,11 +278,10 @@ def static_checks() -> None:
                 r"\bsp_req_target_q\s*<=\s*sp_req_target_d\s*;",
                 core_top, re.DOTALL) is not None,
             "X_ROUTE must capture the SmartPort target before X_SP_ISSUE")
-    require("wire         vtw_sp_active =\n"
-            "        !onee_enable_effective && vtw_smartport_visible;" in top and
+    require("wire         vtw_sp_active = vtw_smartport_visible;" in top and
             ".sp_active(vtw_sp_active)" in top and
             ".vtw_valid(vtw_sp_req_valid)" in top,
-            "apple_top must limit the SmartPort shortcut to the physical host and wire the port")
+            "apple_top must give the SmartPort shortcut the slot-7 visibility and wire the port")
     require("xl_is_overlay_post" in core_top and
             "overlay_capture_armed" in core_top and
             "xl_decoded[16] == overlay_capture_bank_aux" in core_top and
@@ -395,9 +394,9 @@ def static_checks() -> None:
             ".rom_serve_en(ab_read.serve_en && disk2_live_handoff_serve &&" in top and
             "wire rom_read_serve = ab_read.serve_en || rom_serve_en;" in disk2 and
             "wire ab_rom_read = rom_read_serve && ab_read.rw && slot_rom_hit;" in disk2 and
-            "assign vtw_disk2_active = !onee_enable_effective &&" in top and
-            "vtw_core_run_eff && vtw_bus_owned" in top and
-            "card_slot6_bus_enable && disk2_active_timing_q" in top and
+            "assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&" in top and
+            "(onee_enable_effective ||\n"
+            "                               disk2_active_timing_q) &&" in top and
             "!vtw_ctrl_q[7];" in top and
             ".vtw_active(vtw_disk2_active)" in top and
             ".d2_active(vtw_disk2_active)" in top,

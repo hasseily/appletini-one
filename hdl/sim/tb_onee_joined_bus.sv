@@ -40,7 +40,7 @@ module tb_onee_joined_bus;
     globals::AppleBus_write motherboard_write;
     globals::AppleBus_write vtw_write;
     globals::AppleBus_write disk_write;
-    globals::AppleBus_write slot7_write_q = '0;
+    globals::AppleBus_write slot7_write_q;
     globals::AppleBus_write inh_test_write = '0;
     globals::AppleBus_write [12:0] client_writes;
     globals::AppleBus_write merged_write;
@@ -190,37 +190,56 @@ module tb_onee_joined_bus;
         .slot7_hidden(slot7_hidden)
     );
 
-    // Model the shared SmartPort Apple surface. Its private vTW port remains
-    // disabled below, so C7/C8 can succeed only through this bus response.
-    always_ff @(posedge clk) begin
-        if (!resetn || !onee_enabled || slot7_hidden) begin
-            slot7_write_q <= '0;
-        end else begin
-            slot7_write_q.wr_addr          <= 16'h0000;
-            slot7_write_q.wr_rw            <= 1'b1;
-            slot7_write_q.wr_addr_rw_en    <= 1'b0;
-            slot7_write_q.wr_dma_data_en   <= 1'b0;
-            slot7_write_q.assert_inh       <= 1'b0;
-            slot7_write_q.assert_res       <= 1'b0;
-            slot7_write_q.assert_irq       <= 1'b0;
-            slot7_write_q.assert_rdy       <= 1'b0;
-            slot7_write_q.assert_nmi       <= 1'b0;
-            slot7_write_q.assert_dma       <= 1'b0;
-            if (card_ab_read.serve_en && card_ab_read.rw &&
-                (card_ab_read.addr[15:8] == 8'hC7)) begin
-                slot7_write_q.wr_data    <= 8'h77;
-                slot7_write_q.wr_data_en <= 1'b1;
-            end else if (card_ab_read.serve_en && card_ab_read.rw &&
-                         (card_ab_read.addr[15:8] == 8'hC8) &&
-                         sss.io_select[7]) begin
-                slot7_write_q.wr_data    <= 8'h88;
-                slot7_write_q.wr_data_en <= 1'b1;
-            end else if (card_ab_read.data_en) begin
-                slot7_write_q.wr_data    <= 8'h00;
-                slot7_write_q.wr_data_en <= 1'b0;
-            end
-        end
-    end
+    /* The SmartPort card, with both its ports. apple_top gives the bus port
+     * and the private vTW port the same slot-7 visibility. private_paths
+     * selects the build under test: 0 keeps every Cxxx access on the virtual
+     * bus (the Disk II acceleration setting off), 1 lets the core use the
+     * private SmartPort and Disk II ports. */
+    logic private_paths = 1'b0;
+    wire slot7_visible = onee_enabled && !slot7_hidden;
+    wire sp_fast_active = private_paths && slot7_visible;
+    globals::AppleBus_read sp_ab_read;
+    globals::AxiSimple_common sp_as_common;
+    AxiSimple_if sp_axi();
+    logic        sp_req_valid;
+    logic [2:0]  sp_req_target;
+    logic [10:0] sp_req_addr;
+    logic        sp_req_rw;
+    logic [7:0]  sp_req_wdata;
+    logic        sp_req_ready;
+    logic        sp_resp_valid;
+    logic [7:0]  sp_resp_rdata;
+    logic [22:0] sp_sss_snapshot;
+
+    smartport_card sp_i (
+        .clk(clk),
+        .rstn(resetn),
+        .ab_read(sp_ab_read),
+        .apple_bus_visible(slot7_visible),
+        .overlay_bus_visible(1'b0),
+        .sss(disk_sss),
+        .slot_assign(3'd7),
+        .as_common(sp_as_common),
+        .as_client(sp_axi),
+        .ab_write(slot7_write_q),
+        .smartport_irq(),
+        .overlay_capture_drop(1'b0),
+        .overlay_canvas_shr_active(1'b0),
+        .overlay_devsel_enabled(),
+        .overlay_capture_armed(),
+        .overlay_capture_bank_aux(),
+        .overlay_capture_base(),
+        .overlay_capture_limit(),
+        .vtw_valid(sp_req_valid),
+        .vtw_target(sp_req_target),
+        .vtw_addr(sp_req_addr),
+        .vtw_rw(sp_req_rw),
+        .vtw_wdata(sp_req_wdata),
+        .vtw_sss_snapshot(sp_sss_snapshot),
+        .vtw_ready(sp_req_ready),
+        .vtw_resp_valid(sp_resp_valid),
+        .vtw_resp_rdata(sp_resp_rdata)
+    );
 
     function automatic globals::AppleBus_read gate_ab(
         input globals::AppleBus_read value,
@@ -245,6 +264,7 @@ module tb_onee_joined_bus;
     always_comb begin
         card_ab_read = card_probe_active ? card_probe_ab_read : ab_read;
         disk_ab_read = gate_ab(card_ab_read, disk2_visible);
+        sp_ab_read = gate_ab(card_ab_read, slot7_visible);
         disk_sss = sss;
         if (card_probe_active)
             disk_sss.slot_access = 1'b1;
@@ -257,6 +277,22 @@ module tb_onee_joined_bus;
     logic [63:0] disk_mc_wdata;
     logic [7:0] disk_mc_wstrb;
     logic disk_mc_valid;
+
+    // Same terms as apple_top's vtw_disk2_active for a ONE//e session.
+    logic vtw_bus_owned;
+    wire d2_fast_active = private_paths && core_run && vtw_bus_owned &&
+                          card_slot6_bus_enable && !vtw_ctrl_q[7];
+    logic       d2_req_valid;
+    logic [3:0] d2_req_addr;
+    logic       d2_req_ready;
+    logic       d2_resp_valid;
+    logic [7:0] d2_resp_rdata;
+    logic       d2_cycle_tick;
+    logic [3:0] d2_cycle_ticks;
+    logic       d2_native_cycle_active;
+    logic       d2_time_ready;
+    logic       d2_write_timing_active;
+    logic       d2_spinning;
 
     disk2_card disk_i (
         .clk(clk),
@@ -276,17 +312,17 @@ module tb_onee_joined_bus;
         .mc_rdata(64'h0),
         .mc_rvalid(1'b0),
         .ab_write(disk_write),
-        .vtw_active(1'b0),
-        .vtw_req_valid(1'b0),
-        .vtw_req_addr(4'h0),
-        .vtw_req_ready(),
-        .vtw_resp_valid(),
-        .vtw_resp_rdata(),
-        .vtw_cycle_tick(1'b0), .vtw_cycle_ticks(4'd1),
-        .vtw_native_cycle_active(1'b0),
-        .vtw_time_ready(),
-        .vtw_write_timing_active(),
-        .sound_spinning(),
+        .vtw_active(d2_fast_active),
+        .vtw_req_valid(d2_req_valid),
+        .vtw_req_addr(d2_req_addr),
+        .vtw_req_ready(d2_req_ready),
+        .vtw_resp_valid(d2_resp_valid),
+        .vtw_resp_rdata(d2_resp_rdata),
+        .vtw_cycle_tick(d2_cycle_tick), .vtw_cycle_ticks(d2_cycle_ticks),
+        .vtw_native_cycle_active(d2_native_cycle_active),
+        .vtw_time_ready(d2_time_ready),
+        .vtw_write_timing_active(d2_write_timing_active),
+        .sound_spinning(d2_spinning),
         .sound_qtrack(),
         .sound_event(),
         .sound_seek_start_qtrack(),
@@ -322,7 +358,6 @@ module tb_onee_joined_bus;
     logic [7:0] sh_rdata;
     logic [15:0] dbg_core_pc;
     logic [31:0] vtw_core_cycles;
-    logic vtw_bus_owned;
 
     vtw_core_top core_i (
         .clk(clk),
@@ -338,17 +373,18 @@ module tb_onee_joined_bus;
         .ignore_c074(1'b0),
         .slow_region_en(10'd0),
         .slow_duration(16'd0),
-        .d2_active(1'b0),
-        .d2_motor_active(1'b0),
-        .d2_req_valid(),
-        .d2_req_addr(),
-        .d2_req_ready(1'b0),
-        .d2_resp_valid(1'b0),
-        .d2_resp_rdata(8'h00),
-        .d2_cycle_tick(),
-        .d2_native_cycle_active(),
-        .d2_time_ready(1'b1),
-        .d2_write_timing_active(1'b0),
+        .d2_active(d2_fast_active),
+        .d2_motor_active(d2_spinning),
+        .d2_req_valid(d2_req_valid),
+        .d2_req_addr(d2_req_addr),
+        .d2_req_ready(d2_req_ready),
+        .d2_resp_valid(d2_resp_valid),
+        .d2_resp_rdata(d2_resp_rdata),
+        .d2_cycle_tick(d2_cycle_tick),
+        .d2_cycle_ticks(d2_cycle_ticks),
+        .d2_native_cycle_active(d2_native_cycle_active),
+        .d2_time_ready(d2_time_ready),
+        .d2_write_timing_active(d2_write_timing_active),
         .ramworks_en(1'b0), .ramworks_16mb(1'b0),
         .video_vbl(1'b0),
         .video_mode_50hz(1'b0),
@@ -376,18 +412,17 @@ module tb_onee_joined_bus;
         .rw_req_ready(1'b1),
         .rw_resp_valid(1'b0),
         .rw_resp_rline(64'h0),
-        // SmartPort must stay on the synthetic slot bus in ONE//e.
-        .sp_active(1'b0),
+        .sp_active(sp_fast_active),
         .sp_boot_suppress(1'b0),
-        .sp_req_valid(),
-        .sp_req_target(),
-        .sp_req_addr(),
-        .sp_req_rw(),
-        .sp_req_wdata(),
-        .sp_req_ready(1'b0),
-        .sp_resp_valid(1'b0),
-        .sp_resp_rdata(8'h00),
-        .sp_sss_snapshot(),
+        .sp_req_valid(sp_req_valid),
+        .sp_req_target(sp_req_target),
+        .sp_req_addr(sp_req_addr),
+        .sp_req_rw(sp_req_rw),
+        .sp_req_wdata(sp_req_wdata),
+        .sp_req_ready(sp_req_ready),
+        .sp_resp_valid(sp_resp_valid),
+        .sp_resp_rdata(sp_resp_rdata),
+        .sp_sss_snapshot(sp_sss_snapshot),
         .sh_en(sh_en),
         .sh_addr(sh_addr),
         .sh_we(sh_we),
@@ -449,10 +484,32 @@ module tb_onee_joined_bus;
         8'hAD, 8'h00, 8'hC7, 8'h85, 8'h08, // hidden slot 7
         8'hAD, 8'h00, 8'hC6, 8'h85, 8'h09, // forced Disk II ROM
         8'hAD, 8'h00, 8'hC7, 8'h85, 8'h0A, // visible SmartPort slot ROM
-        8'hAD, 8'h00, 8'hC8, 8'h85, 8'h0B, // visible SmartPort C8 ROM
+        8'hAD, 8'h01, 8'hC8, 8'h85, 8'h0B, // visible SmartPort C8 ROM
         8'hAD, 8'hE9, 8'hC0, 8'h85, 8'h0C, // Disk II motor-on side effect
         8'hAD, 8'hEE, 8'hC0, 8'h85, 8'h0D, // Disk II even read response
         8'h4C, 8'h46, 8'hF0                    // done loop
+    };
+
+    // The first bytes of the SmartPort ROMs: $C700 and $C801.
+    localparam logic [7:0] SP_ROM_C700 = 8'hC9;
+    localparam logic [7:0] SP_ROM_C801 = 8'h20;
+
+    /* The program for the private ports, at $F100. It ends in the wait of
+     * the SmartPort ROM for a reply, which never comes in this bench. */
+    localparam byte FAST_PROGRAM [0:45] = '{
+        8'hAD, 8'h00, 8'hC6, 8'h85, 8'h10, // Disk II ROM: ends the cold scan
+        8'hAD, 8'h00, 8'hC7, 8'h85, 8'h11, // SmartPort slot ROM
+        8'hAD, 8'h01, 8'hC8, 8'h85, 8'h12, // SmartPort C8 ROM
+        8'hAD, 8'hF1, 8'hCF, 8'h85, 8'h13, // SmartPort CTRL
+        8'hA9, 8'h5A,
+        8'h8D, 8'hF0, 8'hCF,               // one command byte
+        8'h8D, 8'hF1, 8'hCF,               // EXECUTE
+        8'hAD, 8'hE9, 8'hC0,               // Disk II motor on: odd, bus
+        8'hAD, 8'hEE, 8'hC0, 8'h85, 8'h14, // Disk II even read: private
+        8'hE6, 8'h15,                      // count this run
+        8'hAD, 8'hF1, 8'hCF,               // F126: wait for the reply
+        8'h10, 8'hFB,
+        8'h4C, 8'h2B, 8'hF1
     };
 
     task automatic check(input logic condition, input string message);
@@ -528,6 +585,9 @@ module tb_onee_joined_bus;
         @(posedge clk);
         #1;
         disk_drives = disk_write.wr_data_en;
+        // The SmartPort card registers its ROM read: one clock more.
+        @(posedge clk);
+        #1;
         slot7_drives = slot7_write_q.wr_data_en;
         slot7_data = slot7_write_q.wr_data;
 
@@ -542,11 +602,25 @@ module tb_onee_joined_bus;
 
     int physical_nonzero_cycles = 0;
     int private_smartport_cycles = 0;
+    int private_disk2_cycles = 0;
+    int bus_slot7_cycles = 0;
+    int bus_disk2_even_reads = 0;
     always @(posedge clk) begin
         if (onee_enabled && physical_write !== '0)
             physical_nonzero_cycles++;
-        if (onee_enabled && core_i.sp_req_valid)
+        if (onee_enabled && sp_req_valid && sp_req_ready)
             private_smartport_cycles++;
+        if (onee_enabled && d2_req_valid && d2_req_ready)
+            private_disk2_cycles++;
+        // Virtual bus cycles that the private ports must take.
+        if (sp_fast_active && ab_read.addr_en && ab_read.cycle_valid &&
+            (ab_read.addr[15:8] == 8'hC7 ||
+             (ab_read.addr[15:11] == 5'b11001 &&
+              ab_read.addr != 16'hCFFF)))
+            bus_slot7_cycles++;
+        if (d2_fast_active && ab_read.addr_en && ab_read.cycle_valid &&
+            ab_read.rw && ab_read.addr[15:4] == 12'hC0E && !ab_read.addr[0])
+            bus_disk2_even_reads++;
     end
 
     logic [15:0] scan_pos;
@@ -562,6 +636,8 @@ module tb_onee_joined_bus;
     logic [7:0] probe_slot7_data;
 
     initial begin
+        sp_as_common = '0;
+        sp_axi.awvalid = 1'b0;
         disk_as_common = '0;
         disk_axi.awvalid = 1'b0;
         card_probe_ab_read = '0;
@@ -604,7 +680,7 @@ module tb_onee_joined_bus;
         probe_card_read(16'hC700, probe_disk_drives,
                         probe_slot7_drives, probe_slot7_data);
         check(!probe_disk_drives && probe_slot7_drives &&
-              probe_slot7_data == 8'h77,
+              probe_slot7_data == SP_ROM_C700,
               "Slot 6 OFF did not expose the SmartPort slot ROM");
 
         // Re-enter ONE//e with Slot 6 on. The same resolved target now hides
@@ -728,7 +804,7 @@ module tb_onee_joined_bus;
               "hidden slot 7 did not return scanner fallback");
         check(result[9] == 8'hA2,
               "slot 6 ROM was not visible with Slot 6 enabled");
-        check(result[10] == 8'h77 && result[11] == 8'h88,
+        check(result[10] == SP_ROM_C700 && result[11] == SP_ROM_C801,
               "SmartPort C7/C8 did not use the synthetic slot bus");
         check(result[12] == 8'h2D && disk_i.motor_on_q,
               "Disk II I/O side effect did not traverse the synthetic bus");
@@ -736,8 +812,8 @@ module tb_onee_joined_bus;
               "Disk II even I/O read did not return the card response");
         check(!slot7_hidden,
               "$C600 probe did not release the slot-7 cold-scan hold");
-        check(private_smartport_cycles == 0,
-              "ONE//e entered vTW's private SmartPort path");
+        check(private_smartport_cycles == 0 && private_disk2_cycles == 0,
+              "a private port was used while the private paths were off");
         check(physical_nonzero_cycles == 0 && physical_write == '0,
               "ONE//e virtual traffic reached the physical write record");
 
@@ -794,12 +870,114 @@ module tb_onee_joined_bus;
         check(core_i.core_en && core_i.eff_mode == 2'd1,
               "core did not resume at divided speed after warm reset");
 
+        /* The private SmartPort and Disk II ports in ONE//e, at TURBO. A
+         * warm reset starts the second program; the cold scan then hides
+         * slot 7 again until the program reads the Disk II ROM. */
+        write_vtw_ctrl(32'h0025_0085);
+        repeat (64) @(posedge clk);
+        for (int i = 0; i < 46; i++)
+            sh_write(ROM_BASE + 18'h3100 + 18'(i), FAST_PROGRAM[i]);
+        sh_write(ROM_BASE + 18'h3FFC, 8'h00);
+        sh_write(ROM_BASE + 18'h3FFD, 8'hF1);
+        for (int i = 16; i < 22; i++)
+            sh_write(18'(i), 8'h00);
+        @(negedge clk);
+        private_paths = 1'b1;
+        write_vtw_ctrl(32'h0025_000F);
+        run_fast_program(8'd1);
+
+        // A menu pause during the SmartPort wait stops the CPU and no more.
+        write_vtw_ctrl(32'h0025_010F);
+        repeat (256) @(posedge clk);
+        paused_core_cycles = vtw_core_cycles;
+        paused_core_pc = dbg_core_pc;
+        repeat (128) begin
+            @(posedge clk);
+            check(vtw_core_cycles == paused_core_cycles &&
+                  dbg_core_pc == paused_core_pc && !core_i.core_en,
+                  "pause in the SmartPort wait let the CPU advance");
+        end
+        check(sp_i.exec_pending_q && sp_i.exec_vtw_q,
+              "pause changed the pending SmartPort command");
+        write_vtw_ctrl(32'h0025_000F);
+        fork : wait_for_fast_resume
+            begin
+                wait (vtw_core_cycles != paused_core_cycles);
+                disable wait_for_fast_resume;
+            end
+            begin
+                #20us;
+                $fatal(1, "core did not resume in the SmartPort wait");
+            end
+        join
+
+        // A warm reset during the SmartPort wait runs the program again.
+        run_fast_program(8'd2);
+
         $display("ONEE JOINED BUS PASS");
         $finish;
     end
 
+    /* Warm reset, then wait for the program to reach its SmartPort wait and
+     * check what it read. */
+    task automatic run_fast_program(input logic [7:0] run);
+        logic [7:0] fast [0:5];
+        int sp_before;
+        int d2_before;
+        sp_before = private_smartport_cycles;
+        d2_before = private_disk2_cycles;
+        bus_slot7_cycles = 0;
+        bus_disk2_even_reads = 0;
+        write_onee_control(32'h0000_0001);
+        fork : wait_for_fast_program
+            begin
+                wait (!ab_read.res);
+                wait (ab_read.res);
+                wait (dbg_core_pc >= 16'hF126 && dbg_core_pc <= 16'hF12A &&
+                      sp_i.exec_pending_q);
+                repeat (64) @(posedge clk);
+                disable wait_for_fast_program;
+            end
+            begin
+                #400us;
+                $fatal(1, "private-port program timeout: PC=%04X state=%0d hidden=%0b",
+                       dbg_core_pc, core_i.xstate_q, slot7_hidden);
+            end
+        join
+        write_vtw_ctrl(32'h0025_000D);
+        repeat (64) @(posedge clk);
+        for (int i = 0; i < 6; i++)
+            sh_read(18'(16 + i), fast[i]);
+        write_vtw_ctrl(32'h0025_000F);
+        $display("fast run %0d: %02X %02X %02X %02X %02X %02X sp=%0d d2=%0d bus7=%0d busd2=%0d",
+                 run, fast[0], fast[1], fast[2], fast[3], fast[4], fast[5],
+                 private_smartport_cycles - sp_before,
+                 private_disk2_cycles - d2_before,
+                 bus_slot7_cycles, bus_disk2_even_reads);
+        check(fast[5] == run, "the private-port program did not run once");
+        check(fast[0] == 8'hA2 && !slot7_hidden,
+              "the Disk II ROM read did not end the cold scan");
+        check(fast[1] == SP_ROM_C700 && fast[2] == SP_ROM_C801,
+              "SmartPort ROM bytes were wrong on the private port");
+        check(fast[3] == 8'h20,
+              "SmartPort CTRL did not show the vTW flag in ONE//e");
+        check(sp_i.exec_pending_q && sp_i.exec_vtw_q &&
+              sp_i.in_count_q == 11'd1,
+              "EXECUTE did not arrive as a vTW command with its byte");
+        check(private_smartport_cycles - sp_before >= 6 &&
+              bus_slot7_cycles == 0,
+              "SmartPort accesses did not use the private port");
+        check(disk_i.motor_on_q && private_disk2_cycles - d2_before == 1 &&
+              bus_disk2_even_reads == 0,
+              "the Disk II even read did not use the private port");
+        check(fast[4] == 8'h80,
+              "the private Disk II read returned the wrong byte");
+        check(physical_nonzero_cycles == 0,
+              "ONE//e traffic reached the physical write record");
+    endtask
+
     initial begin
-        #500us;
+        #2ms;
         $fatal(1, "ONEE JOINED BUS TIMEOUT");
     end
 

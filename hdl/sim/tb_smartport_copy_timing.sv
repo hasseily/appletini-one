@@ -2,7 +2,7 @@
 
 // Compare the stock SmartPort ROM RDPAGE with the same bytes in main RAM.
 // A preloaded FIFO removes ARM dispatch and storage from the measurement.
-// The private SmartPort shortcut stays off, as it does in ONE//e.
+// The private SmartPort shortcut stays off: this measures the bus path.
 module tb_smartport_copy_timing;
 
     timeunit 1ns;

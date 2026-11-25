@@ -1998,10 +1998,10 @@ module apple_top(
     assign axi_audio_read.rready = disk2_sound_read.rready;
 
     /* vTW SmartPort short-circuit port (vtw_core_top <-> smartport_card). */
-    // ONE//e keeps SmartPort on the synthetic slot-pin bus. Only a physical
-    // accelerated host may use vTW's private SmartPort shortcut.
-    wire         vtw_sp_active =
-        !onee_enable_effective && vtw_smartport_visible;
+    // ONE//e uses the private SmartPort port as a physical accelerated host
+    // does. The visibility term holds the ONE//e slot-7 rules: the cold scan
+    // for a Disk II start and SuperSprite both remove it.
+    wire         vtw_sp_active = vtw_smartport_visible;
     wire         vtw_sp_boot_suppress =
         !onee_enable_effective && vtw_disk2_boot_scan_q;
     logic        vtw_sp_req_valid;
@@ -2344,9 +2344,11 @@ module apple_top(
             disk2_active_timing_q <= disk2_active;
     end
 
-    assign vtw_disk2_active = !onee_enable_effective &&
-                              vtw_core_run_eff && vtw_bus_owned &&
-                              card_slot6_bus_enable && disk2_active_timing_q &&
+    // ONE//e has no boot-menu handoff: Slot 6 ON is its Disk II owner.
+    assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&
+                              card_slot6_bus_enable &&
+                              (onee_enable_effective ||
+                               disk2_active_timing_q) &&
                               !vtw_ctrl_q[7];
     wire vtw_slot6_boot_probe =
         vtw_disk2_boot_scan_q && vtw_bus_owned &&

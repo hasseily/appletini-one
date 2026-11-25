@@ -70,6 +70,20 @@ module ym2149_bank #(
         logic        env_inc;
     } dyn_t;
 
+    // ---- Event inputs, one register stage ----
+    // The bus decode of the cards is deep. One register here keeps it out
+    // of the queue write enables. All chips get the same delay of one
+    // clock; DO still uses the live BDIR and BC.
+    logic [N-1:0] ce_q = '0, reset_q = '1, bdir_q = '0, bc_q = '0;
+    logic [7:0]   di_q [N];
+    always_ff @(posedge clk) begin
+        ce_q    <= ce;
+        reset_q <= reset;
+        bdir_q  <= bdir;
+        bc_q    <= bc;
+        for (int c = 0; c < N; c++) di_q[c] <= di[c];
+    end
+
     // ---- Event queues ----
     logic [SLOT_BITS-1:0] slot = '0;
     logic [SLOT_BITS-1:0] slot_q = '0;
@@ -86,9 +100,9 @@ module ym2149_bank #(
             logic [1:0]            settle_q = '0;
 
             // Data and BC have an effect on the state only with BDIR.
-            wire [10:0] level = {reset[c], bdir[c], bdir[c] && bc[c],
-                                 bdir[c] ? di[c] : 8'h00};
-            wire        fresh = ce[c] || (level != level_q);
+            wire [10:0] level = {reset_q[c], bdir_q[c], bdir_q[c] && bc_q[c],
+                                 bdir_q[c] ? di_q[c] : 8'h00};
+            wire        fresh = ce_q[c] || (level != level_q);
             wire        push  = fresh || (settle_q != 2'd0);
             wire        pop   = queue_ready[c] && (slot == SLOT_BITS'(c));
 
@@ -103,7 +117,7 @@ module ym2149_bank #(
                     settle_q <= settle_q - 2'd1;
                 end
                 if (push) begin
-                    queue_mem[write_q] <= {reset[c], bdir[c], bc[c], ce[c], di[c]};
+                    queue_mem[write_q] <= {reset_q[c], bdir_q[c], bc_q[c], ce_q[c], di_q[c]};
                     write_q <= write_q + 1'b1;
                 end
                 if (pop) begin

@@ -1352,6 +1352,7 @@ module vtw_core_top (
     vtw_turbo_cache #(.BYTE_INDEX_BITS(TURBO_BYTE_INDEX_BITS)) turbo_cache_i (
         .clk(clk), .rstn(rstn), .invalidate(turbo_flush_all),
         .drop(turbo_ext_plain && !turbo_remap), .drop_addr(sh_addr[15:0]),
+        .hold(turbo_invalidate),
         .addr(core_addr), .rw(core_rwb),
         .read_valid(turbo_read_valid), .read_tag(turbo_read_tag),
         .write_valid(turbo_write_valid), .write_tag(turbo_write_tag),

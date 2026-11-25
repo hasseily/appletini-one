@@ -17,6 +17,8 @@ module vtw_turbo_cache #(
     // Only that word leaves the caches; no fill is taken in this clock.
     input  logic        drop,
     input  logic [15:0] drop_addr,
+    // No fill or snoop write in this clock (a flush or a drop is active).
+    input  logic        hold,
     input  logic [15:0] addr,
     input  logic        rw,
     output logic        read_valid,
@@ -94,7 +96,7 @@ module vtw_turbo_cache #(
         low_phys_mem[low_snoop_index] == snoop_phys[17:8];
     wire low_fill = byte_fill && !snoop_write && fill_low;
     logic [MAP_COUNT-1:0] map_valid_q;
-    wire block = invalidate || drop;
+    wire block = hold;
     logic [WORD_COUNT-1:0] word_valid_q;
 
     // Apple programs often put code and buffers on the same page offset.

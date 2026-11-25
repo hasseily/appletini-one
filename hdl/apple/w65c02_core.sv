@@ -1033,6 +1033,22 @@ module w65c02_core #(
         logic k_rmw;
         logic decimal;     // ADC or SBC: no fused immediate in decimal mode
         logic index_dummy; // an indexed write, INC or DEC has a dummy cycle
+        logic br_always;   // BRA
+        logic br_n;        // one-hot flag that a conditional branch tests
+        logic br_v;
+        logic br_c;
+        logic br_z;
+        logic br_set;      // the branch is taken when that flag is set
+        logic i_ora;       // one-hot operation of a fused immediate
+        logic i_and;
+        logic i_eor;
+        logic i_cmp;
+        logic i_cpx;
+        logic i_cpy;
+        logic i_bit;
+        logic i_lda;
+        logic i_ldx;
+        logic i_ldy;
     } fuse_class_t;
 
     function automatic fuse_class_t fuse_class_of(input logic [7:0] opcode);
@@ -1074,6 +1090,29 @@ module w65c02_core #(
             c.decimal = (d.op == OP_ADC || d.op == OP_SBC);
             c.index_dummy = (k == KIND_WRITE) ||
                 (k == KIND_RMW && (d.op == OP_INC || d.op == OP_DEC));
+            c.br_always = c.rel && d.op == OP_BRA;
+            c.br_n = c.rel && (d.op == OP_BPL || d.op == OP_BMI);
+            c.br_v = c.rel && (d.op == OP_BVC || d.op == OP_BVS);
+            c.br_c = c.rel && (d.op == OP_BCC || d.op == OP_BCS);
+            c.br_z = c.rel && (d.op == OP_BNE || d.op == OP_BEQ);
+            c.br_set = (d.op == OP_BMI || d.op == OP_BVS || d.op == OP_BCS ||
+                        d.op == OP_BEQ);
+            c.i_ora = c.imm && d.op == OP_ORA;
+            c.i_and = c.imm && d.op == OP_AND;
+            c.i_eor = c.imm && d.op == OP_EOR;
+            c.i_cmp = c.imm && d.op == OP_CMP;
+            c.i_cpx = c.imm && d.op == OP_CPX;
+            c.i_cpy = c.imm && d.op == OP_CPY;
+            c.i_bit = c.imm && d.op == OP_BIT;
+            c.i_lda = c.imm && d.op == OP_LDA;
+            c.i_ldx = c.imm && d.op == OP_LDX;
+            c.i_ldy = c.imm && d.op == OP_LDY;
+            // An immediate with no operation here keeps the operand step.
+            if (c.imm && !(c.i_ora || c.i_and || c.i_eor || c.i_cmp || c.i_cpx ||
+                           c.i_cpy || c.i_bit || c.i_lda || c.i_ldx || c.i_ldy)) begin
+                c.imm = 1'b0;
+                c.valid = 1'b0;
+            end
             fuse_class_of = c;
         end
     endfunction
@@ -1098,7 +1137,12 @@ module w65c02_core #(
     wire [15:0] fuse_abs = {ahead1, ahead0};
     wire [15:0] fuse_abs_x = fuse_abs + {8'h00, x_q};
     wire [15:0] fuse_abs_y = fuse_abs + {8'h00, y_q};
-    wire fuse_taken = branch_taken(fetch_decode.op, p_q);
+    // The same result as branch_taken, from the class table.
+    wire fuse_flag = (fuse.br_n && p_q[P_N]) || (fuse.br_v && p_q[P_V]) ||
+                     (fuse.br_c && p_q[P_C]) || (fuse.br_z && p_q[P_Z]);
+    wire fuse_taken = fuse.br_always ||
+        ((fuse.br_n || fuse.br_v || fuse.br_c || fuse.br_z) &&
+         fuse_flag == fuse.br_set);
     wire fuse_index_cross = fuse.absx ? fuse_sum_x[8] : fuse_sum_y[8];
     // Conditions that do not depend on the opcode: TURBO, no interrupt,
     // a byte ahead, and no I/O page under the operand bytes.
@@ -1127,8 +1171,40 @@ module w65c02_core #(
                 hi_q <= ahead1;
                 dummy_addr_q <= fuse_pc2;
             end
-            if (fuse.imm)
-                apply_read_value(fetch_decode.op, 1'b1, ahead0);
+            // The immediate operations, chosen by the one-hot bits of the
+            // class table (the same results as apply_read_value).
+            if (fuse.i_ora) begin
+                a_q <= a_q | ahead0;
+                p_q <= with_nz(p_q, a_q | ahead0);
+            end
+            if (fuse.i_and) begin
+                a_q <= a_q & ahead0;
+                p_q <= with_nz(p_q, a_q & ahead0);
+            end
+            if (fuse.i_eor) begin
+                a_q <= a_q ^ ahead0;
+                p_q <= with_nz(p_q, a_q ^ ahead0);
+            end
+            if (fuse.i_cmp)
+                p_q <= with_nz({p_q[7:1], (a_q >= ahead0)}, a_q - ahead0);
+            if (fuse.i_cpx)
+                p_q <= with_nz({p_q[7:1], (x_q >= ahead0)}, x_q - ahead0);
+            if (fuse.i_cpy)
+                p_q <= with_nz({p_q[7:1], (y_q >= ahead0)}, y_q - ahead0);
+            if (fuse.i_bit)
+                p_q[P_Z] <= ((a_q & ahead0) == 8'h00);
+            if (fuse.i_lda) begin
+                a_q <= ahead0;
+                p_q <= with_nz(p_q, ahead0);
+            end
+            if (fuse.i_ldx) begin
+                x_q <= ahead0;
+                p_q <= with_nz(p_q, ahead0);
+            end
+            if (fuse.i_ldy) begin
+                y_q <= ahead0;
+                p_q <= with_nz(p_q, ahead0);
+            end
             if (fuse.zp)      ea_q <= {8'h00, ahead0};
             if (fuse.zpx)     ea_q <= {8'h00, fuse_sum_x[7:0]};
             if (fuse.zpy)     ea_q <= {8'h00, fuse_sum_y[7:0]};

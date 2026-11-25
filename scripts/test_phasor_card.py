@@ -133,8 +133,8 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             "wire via1_ay0_cs = !via1_portb_bus[4];" in source and
             "wire via1_ay1_cs = !via1_portb_bus[3];" in source,
             "Phasor native mode must use active-low bus-view bits 4 and 3 as AY chip selects")
-    require(".bdir({via1_ay1_drive && via1_portb_bus[1], via0_ay1_drive && via0_portb_bus[1]," in source and
-            ".bc({via1_ay1_drive && via1_portb_bus[0], via0_ay1_drive && via0_portb_bus[0]," in source,
+    require("via1_ay1_drive && via1_portb_bus[1], via0_ay1_drive && via0_portb_bus[1]," in source and
+            "via1_ay1_drive && via1_portb_bus[0], via0_ay1_drive && via0_portb_bus[0]," in source,
             "secondary AY bus control must keep the AppleWin Phasor GAL drive model")
     require("assign via0_porta_in = selected_psg_data(via0_ay0_drive, psg0_data_out,\n"
             "                                         via0_ay1_drive, psg2_data_out);" in source and
@@ -169,8 +169,8 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             "phasor_mix_q <= sum4_10(sum_q[0], sum_q[1], sum_q[2], sum_q[3]);" in mix and
             "echo_mix_q <= sum2_10(sum_q[1], sum_q[3]);" in mix and
             "mockingboard_mix_q <= sum2_10(sum_q[0], sum_q[1]);" in mix and
-            "tone_bass_adjust_q <= audio_control_adjust(tone_bass_q, tone_bass_control_q);" in mix and
-            "tone_mid_adjust_q <= audio_control_adjust(tone_mid_q, tone_mid_control_q);" in mix and
+            "tone_bass_adjust_q <= tone_band_adjust(tone_bass_q, tone_bass_control_q);" in mix and
+            "tone_mid_adjust_q <= tone_band_adjust(tone_mid_q, tone_mid_control_q);" in mix and
             "tone_volume_adjust_q <= audio_control_adjust(tone_apply_base_q, tone_volume_control_q);" in mix and
             "tone_warm_adjust_q <= audio_control_adjust(tone_warm_q, tone_warm_control_q);" in mix and
             "tone_warm_treble_adjust_q <= warmth_treble_adjust(tone_treble_q, tone_warm_control_q);" in mix and

@@ -156,6 +156,34 @@ function automatic signed [20:0] audio_control_adjust(input signed [15:0] sample
     end
 endfunction
 
+// Bass, mid and treble: the part of the band that is added to the mix.
+// A cut removes 1/8 of the band for each step, and step 8 removes all of it.
+// A boost grows faster toward the end of the range:
+//   step   1    2    3    4    5    6    7    8
+//   adds  1/8  1/4  1/2  3/4   1   1.5   2    3   times the band
+//   gain  +1.0 +1.9 +3.5 +4.9 +6.0 +8.0 +9.5 +12.0 dB
+function automatic signed [20:0] tone_band_adjust(input signed [15:0] sample,
+                                                  input signed [4:0] control);
+    logic signed [20:0] widened;
+    begin
+        widened = {{5{sample[15]}}, sample};
+        if (control <= 0) begin
+            tone_band_adjust = audio_control_adjust(sample, control);
+        end else begin
+            case (control[3:0])
+                4'd1:    tone_band_adjust = widened >>> 3;
+                4'd2:    tone_band_adjust = widened >>> 2;
+                4'd3:    tone_band_adjust = widened >>> 1;
+                4'd4:    tone_band_adjust = (widened >>> 1) + (widened >>> 2);
+                4'd5:    tone_band_adjust = widened;
+                4'd6:    tone_band_adjust = widened + (widened >>> 1);
+                4'd7:    tone_band_adjust = widened <<< 1;
+                default: tone_band_adjust = (widened <<< 1) + widened;
+            endcase
+        end
+    end
+endfunction
+
 function automatic signed [20:0] warmth_treble_adjust(input signed [15:0] sample,
                                                        input signed [4:0] control);
     logic signed [20:0] shaped;
@@ -377,11 +405,11 @@ always_ff @(posedge clk) begin
             tone_volume_control_q <= clamp_audio_control(audio_control[24:20]);
 
             tone_base_ext_q <= {{5{tone_apply_base_q[15]}}, tone_apply_base_q};
-            tone_bass_adjust_q <= audio_control_adjust(tone_bass_q, tone_bass_control_q);
+            tone_bass_adjust_q <= tone_band_adjust(tone_bass_q, tone_bass_control_q);
             tone_warm_adjust_q <= audio_control_adjust(tone_warm_q, tone_warm_control_q);
             tone_warm_treble_adjust_q <= warmth_treble_adjust(tone_treble_q, tone_warm_control_q);
-            tone_mid_adjust_q <= audio_control_adjust(tone_mid_q, tone_mid_control_q);
-            tone_treble_adjust_q <= audio_control_adjust(tone_treble_q, tone_treble_control_q);
+            tone_mid_adjust_q <= tone_band_adjust(tone_mid_q, tone_mid_control_q);
+            tone_treble_adjust_q <= tone_band_adjust(tone_treble_q, tone_treble_control_q);
             tone_volume_adjust_q <= audio_control_adjust(tone_apply_base_q, tone_volume_control_q);
 
             tone_shaped_q <= tone_base_ext_q +

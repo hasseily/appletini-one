@@ -16,24 +16,65 @@ module video_mask_config (
 );
     // Byte 0x100 + bank*0x80: tag, control, viewport X/Y, 8 exclusion X/Y.
     // Half-open rectangles use 16-bit endpoints; only 12 bits are implemented.
-    logic [31:0] bank [0:2][0:19];
-    integer b, w;
+    //
+    // The three banks are a 60-word distributed RAM, one RAM for each byte
+    // lane. Flip-flops for all 60 words cost a write decode for each byte, a
+    // 60-word read multiplexer and a 608-bit bank multiplexer. Only the three
+    // tags stay in flip-flops, because all three are compared in one clock.
+    // The RAM has no reset: a bank has no effect until its tag matches, and
+    // the PS writes words 1-19 before it writes the tag.
+    function automatic logic valid_address(input logic [7:0] address);
+        valid_address = address >= 8'h40 && address < 8'ha0 && address[4:0] < 20;
+    endfunction
+    // RAM address: bank * 20 + word.
+    function automatic logic [5:0] ram_address(input logic [1:0] bank_index,
+                                               input logic [4:0] word);
+        ram_address = 6'({bank_index, 4'b0} + {bank_index, 2'b0}) + 6'(word);
+    endfunction
+    function automatic logic [1:0] address_bank(input logic [7:0] address);
+        logic [7:0] offset;
+        offset = address - 8'h40;
+        address_bank = offset[6:5];
+    endfunction
+
+    (* ram_style = "distributed" *) logic [7:0] lane0 [0:63];
+    (* ram_style = "distributed" *) logic [7:0] lane1 [0:63];
+    (* ram_style = "distributed" *) logic [7:0] lane2 [0:63];
+    (* ram_style = "distributed" *) logic [7:0] lane3 [0:63];
+    initial for (int k = 0; k < 64; k++) begin
+        lane0[k] = 0; lane1[k] = 0; lane2[k] = 0; lane3[k] = 0;
+    end
+
+    wire write_valid = write_enable && valid_address(write_address);
+    wire [5:0] write_ram_address =
+        ram_address(address_bank(write_address), write_address[4:0]);
+    wire [5:0] read_ram_address =
+        ram_address(address_bank(read_address), read_address[4:0]);
+    logic [31:0] tag [0:2];
     always_ff @(posedge clk) begin
+        if (write_valid) begin
+            if (write_strobe[0]) lane0[write_ram_address] <= write_data[7:0];
+            if (write_strobe[1]) lane1[write_ram_address] <= write_data[15:8];
+            if (write_strobe[2]) lane2[write_ram_address] <= write_data[23:16];
+            if (write_strobe[3]) lane3[write_ram_address] <= write_data[31:24];
+        end
         if (!resetn) begin
-            for (b=0; b<3; b=b+1)
-                for (w=0; w<20; w=w+1) bank[b][w] <= 0;
-        end else if (write_enable && write_address >= 8'h40 &&
-                     write_address < 8'ha0 && write_address[4:0] < 20) begin
-            bank[(write_address-8'h40)>>5][write_address[4:0]] <=
-                globals::apply_wstrb(
-                    bank[(write_address-8'h40)>>5][write_address[4:0]],
-                    write_data, write_strobe);
+            for (int b = 0; b < 3; b++) tag[b] <= 0;
+        end else if (write_valid && write_address[4:0] == 5'd0) begin
+            tag[address_bank(write_address)] <= globals::apply_wstrb(
+                tag[address_bank(write_address)], write_data, write_strobe);
         end
     end
     always_comb begin
         read_data = 0;
-        if (read_address >= 8'h40 && read_address < 8'ha0 && read_address[4:0] < 20)
-            read_data = bank[(read_address-8'h40)>>5][read_address[4:0]];
+        if (valid_address(read_address)) begin
+            // After a reset the tags are zero; the RAM keeps its old tag.
+            if (read_address[4:0] == 5'd0)
+                read_data = tag[address_bank(read_address)];
+            else
+                read_data = {lane3[read_ram_address], lane2[read_ram_address],
+                             lane1[read_ram_address], lane0[read_ram_address]};
+        end
     end
 
     // This counter survives pixel-clock mode resets. Returning its value with
@@ -57,15 +98,31 @@ module video_mask_config (
         .dest_clk(clk), .dest_out_bin(source_frame_id)
     );
 
-    logic [615:0] matched_config;
-    integer i, j;
+    // The bank whose tag is the latched frame base. The highest bank wins,
+    // as it did when all three banks were compared in parallel.
+    logic matched;
+    logic [1:0] matched_bank;
     always_comb begin
-        matched_config = {source_frame_id, 608'b0};
-        for (i=0; i<3; i=i+1)
-            if (frame_base != 0 && bank[i][0] == frame_base)
-                for (j=1; j<20; j=j+1)
-                    matched_config[(j-1)*32 +: 32] = bank[i][j];
+        matched = 0;
+        matched_bank = 0;
+        for (int b = 0; b < 3; b++)
+            if (frame_base != 0 && tag[b] == frame_base) begin
+                matched = 1;
+                matched_bank = 2'(b);
+            end
     end
+
+    // Copy words 1-19 of the matched bank into the payload, one word in each
+    // clock. The PS does not change the bank of a pending or scanning frame.
+    // The payload becomes pending when the copy ends, 19 clocks after the
+    // latch, which is far inside the vertical blanking that receives it.
+    logic copying;
+    logic [1:0] copy_bank;
+    logic [4:0] copy_word;
+    wire [5:0] copy_ram_address = ram_address(copy_bank, copy_word);
+    wire [31:0] copy_data = {lane3[copy_ram_address], lane2[copy_ram_address],
+                             lane1[copy_ram_address], lane0[copy_ram_address]};
+
     logic [615:0] pending_payload, send_payload;
     logic pending, send = 0;
     wire received, destination_valid;
@@ -76,6 +133,9 @@ module video_mask_config (
             send <= 0;
             pending_payload <= 0;
             send_payload <= 0;
+            copying <= 0;
+            copy_bank <= 0;
+            copy_word <= 5'd1;
         end else begin
             if (send && received) send <= 0;
             if (!send && !received && pending) begin
@@ -83,9 +143,22 @@ module video_mask_config (
                 send <= 1;
                 pending <= 0;
             end
+            if (copying) begin
+                pending_payload[(copy_word - 5'd1) * 32 +: 32] <= copy_data;
+                copy_word <= copy_word + 5'd1;
+                if (copy_word == 5'd19) begin
+                    copying <= 0;
+                    pending <= 1;
+                end
+            end
             if (frame_latched) begin
-                pending_payload <= matched_config;
-                pending <= 1;
+                // A payload of an earlier frame that was not sent is dropped,
+                // as before.
+                pending_payload <= {source_frame_id, 608'b0};
+                copying <= matched;
+                copy_bank <= matched_bank;
+                copy_word <= 5'd1;
+                pending <= !matched;
             end
         end
     end

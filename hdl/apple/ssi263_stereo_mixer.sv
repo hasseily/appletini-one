@@ -5,6 +5,9 @@
 // Four combined gain/pan coefficients share one DSP at the fabric clock. An
 // 18-clock job publishes both channels together. New samples received during
 // a job remain pending and start another job with the latest held values.
+// The four coefficients also share one pan sum and one ramp step: one lane in
+// each clock. A gain changes only at an audio tick, thousands of clocks
+// apart, so each lane's next step is ready long before it is used.
 module ssi263_stereo_mixer (
     input  logic               clk,
     input  logic               rstn,
@@ -28,7 +31,9 @@ module ssi263_stereo_mixer (
     logic pending_q;
     logic signed [15:0] held0_q, held1_q, snapshot0_q, snapshot1_q;
     // Lane order: socket0-left, socket0-right, socket1-left, socket1-right.
-    logic [15:0] gain_q [0:3], target_gain [0:3], target_gain_q [0:3], next_gain [0:3], snapshot_gain_q [0:3];
+    logic [15:0] gain_q [0:3], target_gain_q [0:3], next_gain_q [0:3], snapshot_gain_q [0:3];
+    logic [1:0] control_lane_q;
+    logic [15:0] lane_target, lane_next;
     logic [15:0] volume_gain_q;
     logic signed [15:0] multiply_sample_q, multiply_gain_q;
     (* use_dsp = "yes" *) logic signed [31:0] product_q;
@@ -96,11 +101,13 @@ module ssi263_stereo_mixer (
     endfunction
 
     always_comb begin
-        target_gain[0]=pan_coefficient(volume_gain_q,pan_left(pan[3:0]));
-        target_gain[1]=pan_coefficient(volume_gain_q,pan_right(pan[3:0]));
-        target_gain[2]=pan_coefficient(volume_gain_q,pan_left(pan[7:4]));
-        target_gain[3]=pan_coefficient(volume_gain_q,pan_right(pan[7:4]));
-        for (integer k=0;k<4;k=k+1) next_gain[k]=ramp(gain_q[k],target_gain_q[k]);
+        case (control_lane_q)
+            2'd0: lane_target=pan_coefficient(volume_gain_q,pan_left(pan[3:0]));
+            2'd1: lane_target=pan_coefficient(volume_gain_q,pan_right(pan[3:0]));
+            2'd2: lane_target=pan_coefficient(volume_gain_q,pan_left(pan[7:4]));
+            default: lane_target=pan_coefficient(volume_gain_q,pan_right(pan[7:4]));
+        endcase
+        lane_next=ramp(gain_q[control_lane_q],target_gain_q[control_lane_q]);
         rounded_magnitude=magnitude_q+32'd8192;
         scaled=negative_q ? -$signed(rounded_magnitude[31:14]) : $signed(rounded_magnitude[31:14]);
     end
@@ -115,17 +122,22 @@ module ssi263_stereo_mixer (
             gain_q[2]<=0; gain_q[3]<=DEFAULT_GAIN;
             target_gain_q[0]<=DEFAULT_GAIN; target_gain_q[1]<=0;
             target_gain_q[2]<=0; target_gain_q[3]<=DEFAULT_GAIN;
+            next_gain_q[0]<=DEFAULT_GAIN; next_gain_q[1]<=0;
+            next_gain_q[2]<=0; next_gain_q[3]<=DEFAULT_GAIN;
+            control_lane_q<=0;
             volume_gain_q<=DEFAULT_GAIN;
         end else begin
             mix_valid<=0;
             // Register control conversion separately from the ramp so its
             // ROM, pan sums and bounded step are not one fabric-clock path.
             volume_gain_q<=db_gain(volume_db);
-            for (i=0;i<4;i=i+1) target_gain_q[i]<=target_gain[i];
+            control_lane_q<=control_lane_q+1'b1;
+            target_gain_q[control_lane_q]<=lane_target;
+            next_gain_q[control_lane_q]<=lane_next;
             if (sample0_valid) begin held0_q<=sample0; pending_q<=1; end
             if (sample1_valid) begin held1_q<=sample1; pending_q<=1; end
             if (audio_tick) begin
-                for (i=0;i<4;i=i+1) gain_q[i]<=next_gain[i];
+                for (i=0;i<4;i=i+1) gain_q[i]<=next_gain_q[i];
                 pending_q<=1;
             end
             case (state_q)
@@ -134,7 +146,7 @@ module ssi263_stereo_mixer (
                     // clock so clearing pending cannot discard that update.
                     snapshot0_q<=sample0_valid ? sample0 : held0_q;
                     snapshot1_q<=sample1_valid ? sample1 : held1_q;
-                    for (i=0;i<4;i=i+1) snapshot_gain_q[i]<=audio_tick ? next_gain[i] : gain_q[i];
+                    for (i=0;i<4;i=i+1) snapshot_gain_q[i]<=audio_tick ? next_gain_q[i] : gain_q[i];
                     pending_q<=0; lane_q<=0; state_q<=LOAD;
                 end
                 LOAD: begin

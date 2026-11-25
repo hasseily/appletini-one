@@ -43,6 +43,7 @@ apple/apple_dma_engine.sv
 apple/ps_dma_command.sv
 apple/soft_switch_manager.sv
 apple/YM2149.sv
+apple/ym2149_bank.sv
 apple/ssi263_xck_ce.sv
 apple/ssi263_parameter_rom.sv
 apple/ssi263_native_controller.sv

@@ -20,7 +20,7 @@ SOURCES = [
     "hdl/apple/ssi263_native_tract.sv", "hdl/apple/ssi263_native_engine.sv",
     "hdl/apple/ssi263_response_timing.sv", "hdl/apple/ssi263_stereo_mixer.sv",
     "hdl/apple/ssi263_bus_wrapper.sv", "hdl/apple/ssi263_voice.sv",
-    "hdl/apple/ssi263_xck_ce.sv", "hdl/apple/via6522.v", "hdl/apple/YM2149.sv",
+    "hdl/apple/ssi263_xck_ce.sv", "hdl/apple/via6522.v", "hdl/apple/YM2149.sv", "hdl/apple/ym2149_bank.sv",
     "hdl/apple/mockingboard_audio_mix.sv",
     "hdl/apple/mockingboard.sv", "hdl/sim/tb_onee_ssi263_clock.sv",
 ]

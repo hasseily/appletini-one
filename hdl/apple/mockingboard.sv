@@ -444,84 +444,23 @@ ssi263_stereo_mixer ssi_mixer_i (
     .speech_l(ssi_mix_l), .speech_r(ssi_mix_r), .mix_valid()
 );
 
-YM2149 psg0(
-    .CLK(clk),
-    .CE(psg_clock),
-    .RESET(via_reset || !via0_portb_bus[2]),
-    .BDIR(via0_ay0_drive ? via0_portb_bus[1] : 1'b0),
-    .BC(via0_ay0_drive ? via0_portb_bus[0] : 1'b0),
-    .DI(via0_porta_out),
-    .DO(psg0_data_out),
-    .CHANNEL_A(psg0_chan_a),
-    .CHANNEL_B(psg0_chan_b),
-    .CHANNEL_C(psg0_chan_c),
-    .SEL(1'b0),
-    .MODE(psg_volume_mode_ay8913),
-    .ACTIVE(),
-    .IOA_in(8'h00),
-    .IOA_out(),
-    .IOB_in(8'h00),
-    .IOB_out()
-);
-
-YM2149 psg1(
-    .CLK(clk),
-    .CE(psg_clock),
-    .RESET(via_reset || !via1_portb_bus[2]),
-    .BDIR(via1_ay0_drive ? via1_portb_bus[1] : 1'b0),
-    .BC(via1_ay0_drive ? via1_portb_bus[0] : 1'b0),
-    .DI(via1_porta_out),
-    .DO(psg1_data_out),
-    .CHANNEL_A(psg1_chan_a),
-    .CHANNEL_B(psg1_chan_b),
-    .CHANNEL_C(psg1_chan_c),
-    .SEL(1'b0),
-    .MODE(psg_volume_mode_ay8913),
-    .ACTIVE(),
-    .IOA_in(8'h00),
-    .IOA_out(),
-    .IOB_in(8'h00),
-    .IOB_out()
-);
-
-YM2149 psg2(
-    .CLK(clk),
-    .CE(psg_clock),
-    .RESET(via_reset || !via0_portb_bus[2]),
-    .BDIR(via0_ay1_drive ? via0_portb_bus[1] : 1'b0),
-    .BC(via0_ay1_drive ? via0_portb_bus[0] : 1'b0),
-    .DI(via0_porta_out),
-    .DO(psg2_data_out),
-    .CHANNEL_A(psg2_chan_a),
-    .CHANNEL_B(psg2_chan_b),
-    .CHANNEL_C(psg2_chan_c),
-    .SEL(1'b0),
-    .MODE(psg_volume_mode_ay8913),
-    .ACTIVE(),
-    .IOA_in(8'h00),
-    .IOA_out(),
-    .IOB_in(8'h00),
-    .IOB_out()
-);
-
-YM2149 psg3(
-    .CLK(clk),
-    .CE(psg_clock),
-    .RESET(via_reset || !via1_portb_bus[2]),
-    .BDIR(via1_ay1_drive ? via1_portb_bus[1] : 1'b0),
-    .BC(via1_ay1_drive ? via1_portb_bus[0] : 1'b0),
-    .DI(via1_porta_out),
-    .DO(psg3_data_out),
-    .CHANNEL_A(psg3_chan_a),
-    .CHANNEL_B(psg3_chan_b),
-    .CHANNEL_C(psg3_chan_c),
-    .SEL(1'b0),
-    .MODE(psg_volume_mode_ay8913),
-    .ACTIVE(),
-    .IOA_in(8'h00),
-    .IOA_out(),
-    .IOB_in(8'h00),
-    .IOB_out()
+// The four sound chips share one copy of the chip logic.
+ym2149_bank #(.N(4)) psg_bank_i (
+    .clk(clk),
+    .ce({4{psg_clock}}),
+    .reset({via_reset || !via1_portb_bus[2], via_reset || !via0_portb_bus[2],
+            via_reset || !via1_portb_bus[2], via_reset || !via0_portb_bus[2]}),
+    .bdir({via1_ay1_drive && via1_portb_bus[1], via0_ay1_drive && via0_portb_bus[1],
+           via1_ay0_drive && via1_portb_bus[1], via0_ay0_drive && via0_portb_bus[1]}),
+    .bc({via1_ay1_drive && via1_portb_bus[0], via0_ay1_drive && via0_portb_bus[0],
+         via1_ay0_drive && via1_portb_bus[0], via0_ay0_drive && via0_portb_bus[0]}),
+    .mode({4{psg_volume_mode_ay8913}}),
+    .di('{via0_porta_out, via1_porta_out, via0_porta_out, via1_porta_out}),
+    .dout('{psg0_data_out, psg1_data_out, psg2_data_out, psg3_data_out}),
+    .channel('{psg0_chan_a, psg0_chan_b, psg0_chan_c,
+               psg1_chan_a, psg1_chan_b, psg1_chan_c,
+               psg2_chan_a, psg2_chan_b, psg2_chan_c,
+               psg3_chan_a, psg3_chan_b, psg3_chan_c})
 );
 
 mockingboard_audio_mix audio_mix_i (

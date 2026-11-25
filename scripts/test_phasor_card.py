@@ -88,22 +88,25 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
     ym2149 = read(YM2149_SV)
     via = read(VIA6522_V)
 
-    require(source.count("YM2149 psg") == 4,
-            "Phasor card must instantiate four AY/YM PSG cores")
+    bank = read(YM2149_SV.with_name("ym2149_bank.sv"))
+    require("ym2149_bank #(.N(4)) psg_bank_i (" in source and
+            "YM2149 psg" not in source,
+            "Phasor card must hold four AY/YM PSG cores in one shared bank")
     require("wire psg_volume_mode_ay8913 = audio_control[25];" in source and
-            source.count(".MODE(psg_volume_mode_ay8913)") == 4 and
-            "// AY8910" in ym2149 and
-            "volTable[32] = 8'h00;" in ym2149 and
-            "volTable[62] = 8'hff;" in ym2149 and
+            ".mode({4{psg_volume_mode_ay8913}})," in source and
+            "level_index[i][5] = mode[slot_q];" in bank and
+            "vol_table[32] = 8'h00;" in bank and
+            "vol_table[62] = 8'hff;" in bank and
+            "vol_table[63] = 8'hff;" in bank and
             "volTable[63] = 8'hff;" in ym2149,
             "Mockingboard/Phasor PSGs must support runtime YM2149 vs AY8913 output tables")
-    require("noise_reset <= (addr == 8'd6);" in ym2149 and
-            "wire [4:0] noise_period = ymreg[6][4:0] ? ymreg[6][4:0] : 5'd1;" in ym2149 and
-            "poly17 <= 17'h00001;" in ym2149 and
-            "if (poly17[0] ^ poly17[1])" in ym2149 and
-            "poly17 <= {(poly17[0] ^ poly17[2]), poly17[16:1]};" in ym2149 and
-            "noise_gen_op <= {3{~noise_toggle}};" in ym2149 and
-            "if (RESET || env_reset) begin" in ym2149,
+    require("nx.noise_reset  = (s.addr == 4'd6);" in bank and
+            "(ymreg[6][4:0] != 5'd0) ? ymreg[6][4:0] : 5'd1;" in bank and
+            "nx.poly17        = 17'h00001;" in bank and
+            "if (s.poly17[0] ^ s.poly17[1]) nx.noise_toggle = ~s.noise_toggle;" in bank and
+            "nx.poly17 = {(s.poly17[0] ^ s.poly17[2]), s.poly17[16:1]};" in bank and
+            "nx.noise_gen_op = ~s.noise_toggle;" in bank and
+            "if (ev.reset || s.env_reset) begin" in bank,
             "AY noise/envelope timing must keep AppleWin-style reset and noise-toggle behavior")
     require("output wire [7:0] portb_bus" in via and
             "assign portb_bus = (portb_out & ddrb) | (portb_in & ~ddrb);" in via,
@@ -130,8 +133,8 @@ def test_four_ay_chips_and_phasor_chip_selects() -> None:
             "wire via1_ay0_cs = !via1_portb_bus[4];" in source and
             "wire via1_ay1_cs = !via1_portb_bus[3];" in source,
             "Phasor native mode must use active-low bus-view bits 4 and 3 as AY chip selects")
-    require(".BDIR(via0_ay1_drive ? via0_portb_bus[1] : 1'b0)" in source and
-            ".BDIR(via1_ay1_drive ? via1_portb_bus[1] : 1'b0)" in source,
+    require(".bdir({via1_ay1_drive && via1_portb_bus[1], via0_ay1_drive && via0_portb_bus[1]," in source and
+            ".bc({via1_ay1_drive && via1_portb_bus[0], via0_ay1_drive && via0_portb_bus[0]," in source,
             "secondary AY bus control must keep the AppleWin Phasor GAL drive model")
     require("assign via0_porta_in = selected_psg_data(via0_ay0_drive, psg0_data_out,\n"
             "                                         via0_ay1_drive, psg2_data_out);" in source and

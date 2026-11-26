@@ -45,6 +45,9 @@ module apple_cycle_egress
     output logic [31:0]                 stat_gap_markers,
     output logic [31:0]                 stat_bursts_issued,
     output logic [31:0]                 stat_full_stall_cycles,
+    // The consumer is 8192 records (64 KiB) or more behind. A source that
+    // can wait must stop, so the records that cannot wait keep their space.
+    output logic                        ring_busy,
 
     // AXI3 HP0 write master
     Axi3_write_if.master                axi_hp0_write
@@ -103,6 +106,8 @@ module apple_cycle_egress
     logic ring_full_for_gap_now;
     logic ring_full_for_records_q;
     logic ring_full_for_gap_q;
+    logic ring_busy_q = 1'b0;
+    assign ring_busy = ring_busy_q;
     assign ring_full_for_records_now =
         (used_bytes >= (ring_size_bytes - 32'd16));
     assign ring_full_for_gap_now =
@@ -203,6 +208,7 @@ module apple_cycle_egress
              * allow an unsafe burst. */
             ring_full_for_records_q <= ring_full_for_records_now;
             ring_full_for_gap_q     <= ring_full_for_gap_now;
+            ring_busy_q             <= |used_bytes[31:16];
 
             /* 4KB boundary cap: beat_addr_q[11:3] is the beat index
              * within the 4KB page (0..511); the last 16-beat slot has

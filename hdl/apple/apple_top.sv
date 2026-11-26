@@ -1172,6 +1172,7 @@ module apple_top(
     logic [31:0] egress_stat_gap_markers;
     logic [31:0] egress_stat_bursts_issued;
     logic [31:0] egress_stat_full_stall_cycles;
+    logic        egress_ring_busy;
 
     logic        egress_capture_drop_ack;
 
@@ -1210,6 +1211,7 @@ module apple_top(
         .direct_addr(vtw_video_record_addr),
         .direct_data(vtw_video_record_data),
         .direct_ready(vtw_video_record_ready),
+        .direct_hold(egress_ring_busy),
         .suppress_bus_writes(vtw_video_direct_active),
         .cycle_capture_data(cycle_capture_data_internal),
         .cycle_capture_rd_en(cycle_capture_rd_en_internal),
@@ -1241,6 +1243,7 @@ module apple_top(
         .stat_gap_markers          (egress_stat_gap_markers),
         .stat_bursts_issued        (egress_stat_bursts_issued),
         .stat_full_stall_cycles    (egress_stat_full_stall_cycles),
+        .ring_busy                 (egress_ring_busy),
         .axi_hp0_write             (axi_hp0_write)
     );
 

@@ -36,6 +36,9 @@ module apple_cycle_capture (
     input  logic [16:0]                     direct_addr,
     input  logic [7:0]                      direct_data,
     output logic                            direct_ready,
+    // The ARM is far behind with the ring: accept no direct byte. The
+    // physical records then keep the ring and this FIFO for themselves.
+    input  logic                            direct_hold = 1'b0,
     input  logic                            suppress_bus_writes,
 
     output apple_cycle_capture_pkg::AppleCycleRecord cycle_capture_data,
@@ -393,7 +396,7 @@ module apple_cycle_capture (
     // address/overlay decode on the direct-write acceptance path.
     assign direct_ready = resetn && !soft_reset && !fifo_full &&
         !native_gs_observe && !native_gs_active && !native_gs_active_q &&
-        !native_state_retry_q &&
+        !native_state_retry_q && !direct_hold &&
         (fifo_write_count < 13'(FIFO_DEPTH - 32)) &&
         !pending_record_valid && !incoming_valid && !ab_read.data_en;
     wire direct_push = (direct_valid === 1'b1) && direct_ready;

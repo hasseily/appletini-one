@@ -92,6 +92,28 @@
  * out the timer reads, counter snapshots, decimal formatting, and UART writes. */
 #define CPU1_STATUS_UART 0
 
+/* ---- CPU1 load figures -------------------------------------------------
+ * The PMU cycle counter counts CPU clocks. It is 32 bits wide and wraps in
+ * about 6 s at 667 MHz; all uses are differences over less than that. */
+static void cpu1_cycle_counter_start(void)
+{
+    uint32_t v;
+    __asm__ volatile ("mrc p15, 0, %0, c9, c12, 0" : "=r"(v));
+    v = (v | 0x5U) & ~0x8U;          /* enable, reset the counter, no /64 */
+    __asm__ volatile ("mcr p15, 0, %0, c9, c12, 0" : : "r"(v));
+    v = 0x80000000U;                 /* enable the cycle counter */
+    __asm__ volatile ("mcr p15, 0, %0, c9, c12, 1" : : "r"(v));
+}
+
+static inline uint32_t cpu1_cycles(void)
+{
+    uint32_t v;
+    __asm__ volatile ("mrc p15, 0, %0, c9, c13, 0" : "=r"(v));
+    return v;
+}
+
+#define CPU1_LOAD_INTERVAL_CYCLES 600000000U   /* about 0.9 s */
+
 static uint32_t apple_reset_status_read(void)
 {
     return REG_READ(CARD_CTRL_APPLE_RESET_STATUS_REG);
@@ -361,6 +383,14 @@ int main(void)
 #ifdef APPLETINI_HTTPS_PROBE
     uint32_t health_divider = 0U;
 #endif
+    cpu1_cycle_counter_start();
+    uint32_t load_start = cpu1_cycles();
+    uint32_t load_poll = 0U;
+    uint32_t load_pixel0 = g_acr_pixel_cpu_cycles;
+    uint32_t load_records0 = g_records_processed;
+    uint32_t load_resyncs0 = g_acr_resyncs_cleared;
+    uint32_t load_gaps0 = g_gap_markers_seen;
+    uint32_t load_count = 0U;
     for (;;) {
         const uint32_t apple_status = apple_reset_status_read();
         const uint8_t reset_seq =
@@ -375,7 +405,30 @@ int main(void)
             (apple_status & CARD_CTRL_APPLE_RESET_SHR_ACTIVE_BIT) != 0U);
         linear_text_overlay_capture_poll();
         pc_transporter_cga_capture_poll();
-        apple_cycle_egress_poll();
+        {
+            const uint32_t poll_start = cpu1_cycles();
+            apple_cycle_egress_poll();
+            const uint32_t now = cpu1_cycles();
+            load_poll += now - poll_start;
+            if ((now - load_start) >= CPU1_LOAD_INTERVAL_CYCLES) {
+                const apple_fb_load_t load = {
+                    now - load_start,
+                    g_acr_pixel_cpu_cycles - load_pixel0,
+                    load_poll,
+                    g_records_processed - load_records0,
+                    g_acr_resyncs_cleared - load_resyncs0,
+                    g_gap_markers_seen - load_gaps0,
+                    ++load_count
+                };
+                apple_fb_load_publish(&load);
+                load_start = now;
+                load_poll = 0U;
+                load_pixel0 = g_acr_pixel_cpu_cycles;
+                load_records0 = g_records_processed;
+                load_resyncs0 = g_acr_resyncs_cleared;
+                load_gaps0 = g_gap_markers_seen;
+            }
+        }
 
         /* Diagnostic shadow-dump request from CPU0's UART console.
          * Costs one strongly-ordered OCM read per pass when idle;

@@ -133,6 +133,21 @@ typedef struct {
     uint32_t frames;
 } apple_fb_health_t;
 void apple_fb_health_publish(const apple_fb_health_t *health);
+
+/* CPU1 load figures for one interval of about one second, in CPU cycles
+ * of the PMU cycle counter. CPU1 writes, CPU0 reads for the UART status.
+ * A torn read gives one wrong line; the figures are diagnostic only. */
+typedef struct {
+    uint32_t interval;   /* length of the interval */
+    uint32_t pixel;      /* in the pixel code of the legacy modes */
+    uint32_t poll;       /* in the ring poll (it includes the pixel code) */
+    uint32_t records;    /* records handled */
+    uint32_t resyncs;    /* frames dropped after a gap */
+    uint32_t gaps;       /* gap markers */
+    uint32_t count;      /* number of intervals published */
+} apple_fb_load_t;
+void apple_fb_load_publish(const apple_fb_load_t *load);
+void apple_fb_load_get(apple_fb_load_t *load);
 int apple_fb_health_get(apple_fb_health_t *health);
 
 /* CPU0/shared init: reset shared handoff/control words to their boot defaults.

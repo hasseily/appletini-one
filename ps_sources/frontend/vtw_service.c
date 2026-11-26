@@ -9,6 +9,7 @@
 
 #include "card_control_regs.h"
 #include "boot_menu_service.h"
+#include "apple_fb_handoff.h"
 #include "disk2_service.h"
 #include "../lib/common.h"
 #include "../lib/uart.h"
@@ -1473,6 +1474,24 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(7)),
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(8)));
     uart_puts(uart_base, line);
+    {
+        /* Load of the renderer core in its last interval of about 1 s. */
+        apple_fb_load_t load;
+        apple_fb_load_get(&load);
+        if (load.interval != 0U) {
+            snprintf(line, sizeof(line),
+                     "vtw: cpu1 poll=%lu%% pixel=%lu%% recs/s=%lu gaps=%lu "
+                     "resyncs=%lu n=%lu\r\n",
+                     (unsigned long)(((uint64_t)load.poll * 100U) / load.interval),
+                     (unsigned long)(((uint64_t)load.pixel * 100U) / load.interval),
+                     (unsigned long)(((uint64_t)load.records * 666666667ULL) /
+                                     load.interval),
+                     (unsigned long)load.gaps,
+                     (unsigned long)load.resyncs,
+                     (unsigned long)load.count);
+            uart_puts(uart_base, line);
+        }
+    }
     /* Record stream to the renderer (registers 0x27 to 0x2A): a gap is a
      * lost record batch, after which the renderer discards a frame. */
     snprintf(line, sizeof(line),

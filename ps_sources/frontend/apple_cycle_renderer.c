@@ -60,6 +60,20 @@ volatile uint32_t g_acr_frames_complete   = 0u;
 volatile uint32_t g_acr_resyncs_cleared   = 0u;
 volatile uint32_t g_acr_records_seen      = 0u;
 volatile uint32_t g_acr_cycles_rendered   = 0u;
+volatile uint32_t g_acr_pixel_cpu_cycles  = 0u;
+
+/* PMU cycle counter. CPU1 starts it in its main(). In a host build this
+ * gives zero. */
+static inline uint32_t acr_cpu_cycles(void)
+{
+#if defined(__arm__)
+    uint32_t v;
+    __asm__ volatile ("mrc p15, 0, %0, c9, c13, 0" : "=r"(v));
+    return v;
+#else
+    return 0u;
+#endif
+}
 volatile uint32_t g_acr_unknown_modes     = 0u;
 volatile uint32_t g_acr_frame_edges_seen  = 0u;
 
@@ -3865,6 +3879,7 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
     /* Map ALTCHARSET soft-switch to g_nVideoCharSet (0/1). */
     g_nVideoCharSet = sw_altcharset(sw) ? 1 : 0;
 
+    const uint32_t pixel_start = acr_cpu_cycles();
     const render_mode_t mode = pick_mode(sw, g_nVideoClockVert);
     position_video_address(mode);
 
@@ -3879,6 +3894,7 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
     }
     emit_shifted_right_edge_pixels(mode);
     restore_left_border(render_line, render_cycle);
+    g_acr_pixel_cpu_cycles += acr_cpu_cycles() - pixel_start;
 
     g_acr_cycles_rendered++;
     s_records_in_frame++;

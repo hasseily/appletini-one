@@ -43,6 +43,12 @@ atn_bgra_t g_aBnwColorTV[ATN_NUM_SEQUENCES];
 static uint8_t s_video_mono_enable = 0U;
 static uint8_t s_video_mono_color = APPLE_VIDEO_MONO_WHITE;
 static uint8_t s_video_color_mode = APPLE_VIDEO_COLOR_COMPOSITE_MONITOR;
+/* Monochrome pixels with the tint applied, for the selected mono colour. */
+static uint32_t s_mono_tint_table[ATN_NUM_SEQUENCES];
+static uint8_t s_mono_tint_valid = 0U;
+
+static inline uint32_t atn_pack_bgra(atn_bgra_t v);
+static inline atn_bgra_t atn_tint_mono(atn_bgra_t v);
 
 #define ATN_BGR(r, g, b) { (uint8_t)(b), (uint8_t)(g), (uint8_t)(r), 255U }
 
@@ -285,6 +291,7 @@ void appletini_ntsc_init(void) {
     g_nColorBurstPixels = 0;
     g_nTextFlashMask = 0;
     g_nVideoCharSet = 0;
+    s_mono_tint_valid = 0U;
     appletini_ntsc_set_video_output(0U,
                                     APPLE_VIDEO_MONO_WHITE,
                                     APPLE_VIDEO_COLOR_COMPOSITE_MONITOR);
@@ -293,9 +300,22 @@ void appletini_ntsc_init(void) {
 void appletini_ntsc_set_video_output(uint8_t mono_enable,
                                      uint8_t mono_color,
                                      uint8_t color_mode) {
+    const uint8_t color = apple_video_mono_color_clamp(mono_color);
+
     s_video_mono_enable = (mono_enable != 0U) ? 1U : 0U;
-    s_video_mono_color = apple_video_mono_color_clamp(mono_color);
     s_video_color_mode = apple_video_color_mode_clamp(color_mode);
+    /* The tint of a monochrome pixel depends only on the 12 signal bits.
+     * Calculate it here, once for each change of the colour, and not for
+     * each dot on the capture thread. */
+    if (s_video_mono_enable != 0U &&
+        (s_mono_tint_valid == 0U || color != s_video_mono_color)) {
+        for (unsigned s = 0U; s < ATN_NUM_SEQUENCES; ++s) {
+            s_mono_tint_table[s] =
+                atn_pack_bgra(atn_tint_mono(g_aBnWMonitor[s]));
+        }
+        s_mono_tint_valid = 1U;
+    }
+    s_video_mono_color = color;
 }
 
 void appletini_ntsc_set_framebuffer(uint32_t *fb) {
@@ -366,14 +386,12 @@ static inline uint32_t atn_color_table_lookup(uint16_t signal) {
 
 static inline uint32_t atn_mono_table_lookup(uint16_t signal) {
     g_nSignalBitsNTSC = ((g_nSignalBitsNTSC << 1) | (signal & 1)) & 0xFFF;
-    atn_bgra_t v = (s_video_mono_enable == 0U &&
-                    s_video_color_mode == APPLE_VIDEO_COLOR_TV) ?
+    if (s_video_mono_enable != 0U) {
+        return s_mono_tint_table[g_nSignalBitsNTSC];
+    }
+    return atn_pack_bgra((s_video_color_mode == APPLE_VIDEO_COLOR_TV) ?
         g_aBnwColorTV[g_nSignalBitsNTSC] :
-        g_aBnWMonitor[g_nSignalBitsNTSC];
-
-    return (s_video_mono_enable != 0U) ?
-        atn_pack_bgra(atn_tint_mono(v)) :
-        atn_pack_bgra(v);
+        g_aBnWMonitor[g_nSignalBitsNTSC]);
 }
 
 static inline void atn_advance_phase(void) {
@@ -405,7 +423,19 @@ void atn_emit_blank_pixels(uint8_t count) {
  * next cell. The burst selects the colour or monochrome table. */
 void atn_updatePixels(uint16_t bits) {
     const int use_colour = atn_get_color_burst() && s_video_mono_enable == 0U;
-    if (s_video_mono_enable == 0U &&
+    if (s_video_mono_enable != 0U) {
+        /* Monochrome: the same loop as below, with the tinted table. The
+         * colour phase still moves, as in the per-dot path. */
+        uint32_t *const pixels = g_pVideoAddress;
+        unsigned history = (unsigned)g_nSignalBitsNTSC;
+        for (unsigned dot = 0; dot < 14; dot++) {
+            history = ((history << 1) | ((bits >> dot) & 1U)) & 0xFFFU;
+            pixels[dot] = s_mono_tint_table[history];
+        }
+        g_pVideoAddress += 14;
+        g_nSignalBitsNTSC = (int)history;
+        g_nColorPhaseNTSC = (int)(((unsigned)g_nColorPhaseNTSC + 14U) & 3U);
+    } else if (s_video_mono_enable == 0U &&
         (s_video_color_mode == APPLE_VIDEO_COLOR_COMPOSITE_MONITOR ||
          s_video_color_mode == APPLE_VIDEO_COLOR_TV)) {
         /* Select the table once per cell and keep the dot state in local

@@ -75,6 +75,33 @@
 #define HANDOFF_HEALTH_ADDR          0xFFFF1100U
 #define HANDOFF_HEALTH_MAGIC         0x48545031U
 
+#define HANDOFF_LOAD_ADDR            0xFFFF1140U
+
+void apple_fb_load_publish(const apple_fb_load_t *load)
+{
+    volatile uint32_t *words = (volatile uint32_t *)HANDOFF_LOAD_ADDR;
+    words[0] = load->interval;
+    words[1] = load->pixel;
+    words[2] = load->poll;
+    words[3] = load->records;
+    words[4] = load->resyncs;
+    words[5] = load->gaps;
+    words[6] = load->count;
+}
+
+void apple_fb_load_get(apple_fb_load_t *load)
+{
+    const volatile uint32_t *words =
+        (const volatile uint32_t *)HANDOFF_LOAD_ADDR;
+    load->interval = words[0];
+    load->pixel    = words[1];
+    load->poll     = words[2];
+    load->records  = words[3];
+    load->resyncs  = words[4];
+    load->gaps     = words[5];
+    load->count    = words[6];
+}
+
 void apple_fb_health_publish(const apple_fb_health_t *health)
 {
     volatile uint32_t *words = (volatile uint32_t *)HANDOFF_HEALTH_ADDR;

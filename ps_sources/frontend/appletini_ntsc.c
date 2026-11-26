@@ -438,11 +438,14 @@ void atn_updatePixels(uint16_t bits) {
         g_pVideoAddress += 14;
         g_nSignalBitsNTSC = (int)history;
         g_nColorPhaseNTSC = (int)(((unsigned)g_nColorPhaseNTSC + 14U) & 3U);
-    } else if (s_video_mono_enable == 0U &&
-        (s_video_color_mode == APPLE_VIDEO_COLOR_COMPOSITE_MONITOR ||
-         s_video_color_mode == APPLE_VIDEO_COLOR_TV)) {
+    } else if (!use_colour ||
+        s_video_color_mode == APPLE_VIDEO_COLOR_COMPOSITE_MONITOR ||
+        s_video_color_mode == APPLE_VIDEO_COLOR_TV) {
         /* Select the table once per cell and keep the dot state in local
-         * variables while emitting pixels on the capture thread. */
+         * variables while emitting pixels on the capture thread. With no
+         * burst (text) this loop serves all colour modes: the Idealized and
+         * RGB modes used the per-dot path below for text, and 40-column
+         * text then took more time than the renderer core has. */
         const int tv = s_video_color_mode == APPLE_VIDEO_COLOR_TV;
         uint32_t *const pixels = g_pVideoAddress;
         unsigned history = (unsigned)g_nSignalBitsNTSC;

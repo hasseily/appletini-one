@@ -96,6 +96,8 @@ extern volatile uint32_t g_acr_records_seen;
 extern volatile uint32_t g_acr_cycles_rendered;
 /* CPU cycles (PMU cycle counter) in the pixel code of the legacy modes. */
 extern volatile uint32_t g_acr_pixel_cpu_cycles;
+/* Exact time of the frame work (start, end, publish); see the .c file. */
+extern volatile uint32_t g_acr_frame_cpu_cycles;
 extern volatile uint32_t g_acr_unknown_modes;
 /* Frames rendered with the SHR4 extended decode active (magic at aux
  * $9DFC). Climbing = software is using SDD-style SHR4 modes. */

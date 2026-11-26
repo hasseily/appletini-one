@@ -148,6 +148,14 @@ module vtw_core_top (
     output logic [16:0]             video_record_addr,
     output logic [7:0]              video_record_data,
     input  logic                    video_record_ready,
+    /* 1 = a TURBO video write goes to the renderer only; it is not repeated
+     * on the bus. In ONE//e the bus has no motherboard RAM, and the shadow
+     * and the renderer already have the byte. Then no bytes are pending, so
+     * no Cxxx access waits for them and no bank flush runs (40% of the time
+     * in A2Desktop). The level must be 0 when something on the bus reads
+     * video writes: the SDD tap, the text overlay capture. A change of the
+     * level is safe at any time: bytes already pending still drain. */
+    input  logic                    video_no_mirror = 1'b0,
     // Test switch: no bytes ahead for the core, so no fused fetch.
     input  logic                    fuse_disable = 1'b0,
     output logic                    video_direct_active,
@@ -1293,7 +1301,7 @@ module vtw_core_top (
     // actual translation state discards RAM data; polling I/O remains live.
     // External shadow writes and changes to write-through policy invalidate
     // both caches. No physical I/O, PSRAM, or card response is ever cached.
-    wire turbo_remap = !core_res_n || arm_rw_flush_req ||
+    wire turbo_remap = !core_res_n ||
         (speed_mode != turbo_mode_q) || (ramworks_en != turbo_ramworks_q) ||
         (post_main_wide_eff != turbo_post_wide_q) ||
         (overlay_capture_armed != turbo_overlay_q) ||
@@ -1310,7 +1318,11 @@ module vtw_core_top (
     wire turbo_flush_all = turbo_remap || (turbo_ext_write && !turbo_ext_plain);
     // For the control logic a dropped word is the same as a flush: no step
     // completes from cache data in this clock.
-    wire turbo_invalidate = turbo_remap || turbo_ext_write;
+    // An ARM hold request no longer empties the caches (Doom makes about 50
+    // requests in a frame). All that ARM can change in cached memory goes
+    // through the shadow host port or the copy engine, and each such write
+    // drops its own word above. The request still blocks completion here.
+    wire turbo_invalidate = turbo_remap || turbo_ext_write || arm_rw_flush_req;
     wire turbo_map_fill = (xstate_q == X_ROUTE) && xl_shadow_valid &&
                          core_res_n && cycle_addr_q[15:12] != 4'hC;
     wire turbo_byte_fill = (xstate_q == X_MEM_CAPTURE) && cycle_rw_q &&
@@ -1381,7 +1393,11 @@ module vtw_core_top (
         .snoop_phys(shadow_a_addr),
         .snoop_data(cycle_wdata_q)
     );
-    wire turbo_hit = cycle_addr_q[15:12] != 4'hC &&
+    /* The hold handshake needs the core parked in a completed memory
+     * state, not in X_TURBO_DONE. The full flush gave that: the access in
+     * flight missed and took the shadow read. Now only that access takes
+     * the miss path while the request is pending. */
+    wire turbo_hit = cycle_addr_q[15:12] != 4'hC && !rw_flush_pending_q &&
         (cycle_rw_q ? (turbo_read_valid_q &&
                       turbo_read_tag_q == cycle_addr_q[15:TURBO_BYTE_INDEX_BITS]) :
                      (turbo_write_valid_q && turbo_write_fast_q &&
@@ -1521,6 +1537,7 @@ module vtw_core_top (
                           (xstate_q == X_POST_STALL);
     wire video_fast_accept = video_fast_req && video_coalesce_ready &&
                              video_start_ready && video_record_ready;
+    wire video_mirror_accept = video_fast_accept && !video_no_mirror;
     wire core_post_accept = core_post_req && !video_selected &&
                             !eng_post_full && !video_mirror_mode_q;
     assign core_post_blocked = video_selected ?
@@ -1596,7 +1613,7 @@ module vtw_core_top (
     assign video_mirror_ready = !eng_post_full && engine_enable;
     vtw_video_coalescer video_coalescer_i (
         .clk(clk), .rstn(rstn), .clear(!ab_read.res),
-        .write_valid(video_fast_accept), .write_addr(xl_decoded[16:0]),
+        .write_valid(video_mirror_accept), .write_addr(xl_decoded[16:0]),
         .write_data(cycle_wdata_q), .write_ready(video_coalesce_ready),
         .write_active(cycle_video_mirror_active_q),
         .flush_valid(video_flush_valid), .flush_bank(video_flush_bank),
@@ -1611,11 +1628,11 @@ module vtw_core_top (
             video_active_pending_q <= 1'b0;
             video_policy_flush_q <= 1'b0;
         end else begin
-            if (video_fast_accept)
+            if (video_mirror_accept)
                 video_mirror_mode_q <= 1'b1;
             else if (video_all_drained)
                 video_mirror_mode_q <= 1'b0;
-            if (video_fast_accept && cycle_video_mirror_active_q)
+            if (video_mirror_accept && cycle_video_mirror_active_q)
                 video_active_pending_q <= 1'b1;
             else if (video_active_drained && video_post_idle)
                 video_active_pending_q <= 1'b0;

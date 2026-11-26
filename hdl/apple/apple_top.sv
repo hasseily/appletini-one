@@ -2425,6 +2425,13 @@ module apple_top(
 
     /* SHR paged-mode posting fallback (CARD_CTRL 0x35 bit 0). */
     logic post_main_wide_q;
+    /* ONE//e has no motherboard RAM behind the bus, so TURBO video writes
+     * are not repeated there. The SDD tap and the text overlay capture read
+     * video writes from the bus: with one of them on, the mirror stays. */
+    logic vtw_video_no_mirror_q;
+    always_ff @(posedge clk)
+        vtw_video_no_mirror_q <= onee_enable_effective && !sdd_cfg_enable_q &&
+                                 !overlay_capture_armed;
 
     assign dma_req_ready = legacy_dma_req_ready && !vtw_copy_busy;
     wire vtw_copy_command = as_client.awvalid &&
@@ -2572,6 +2579,7 @@ module apple_top(
         .post_main_wide(post_main_wide_q),
         .video_record_valid(vtw_video_record_valid),
         .video_record_enable(1'b1),
+        .video_no_mirror(vtw_video_no_mirror_q),
         .video_record_addr(vtw_video_record_addr),
         .video_record_data(vtw_video_record_data),
         .video_record_ready(vtw_video_record_ready && egress_cfg_enable_q),

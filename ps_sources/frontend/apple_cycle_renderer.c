@@ -181,6 +181,31 @@ static void acr_frame_to_ddr(uint32_t slot, uint32_t plain_legacy)
     s_slot_open[slot] = 0u;
     memset(s_row_done, 0, sizeof(s_row_done));
 }
+
+/* Frame work (frame start, frame end, publish) falls on one record of a
+ * frame, so the 1-in-64 sample of the poll cannot measure it: in SHR it
+ * gave 0% or 105% for the same load. This work is timed exactly here.
+ * The poll subtracts it from a sampled record that contains it, and the
+ * load report adds the two counters. */
+volatile uint32_t g_acr_frame_cpu_cycles = 0u;
+static uint32_t s_frame_work_depth = 0u;
+static uint32_t s_frame_work_start = 0u;
+
+static inline void acr_frame_work_begin(void)
+{
+    if (s_frame_work_depth++ == 0u) {
+        s_frame_work_start = acr_cpu_cycles();
+    }
+}
+
+static inline void acr_frame_work_end(void)
+{
+    if (--s_frame_work_depth == 0u) {
+        const uint32_t spent = acr_cpu_cycles() - s_frame_work_start;
+
+        g_acr_frame_cpu_cycles += spent;
+    }
+}
 volatile uint32_t g_acr_unknown_modes     = 0u;
 volatile uint32_t g_acr_frame_edges_seen  = 0u;
 
@@ -3205,6 +3230,7 @@ static void publish_current_frame(void)
     /* Put the finished frame in DDR before CPU0 can see the slot and its
      * matching format metadata. The plain legacy frame fills only the first
      * part of the slot, and most of its rows are already there. */
+    acr_frame_work_begin();
     acr_frame_to_ddr(s_cached_writer_slot,
                      (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY &&
                       s_legacy_flip_q == 0u) ? 1u : 0u);
@@ -3212,6 +3238,7 @@ static void publish_current_frame(void)
                                          s_frame_format_detail,
                                          s_vidhd_border_color);
     g_acr_frames_complete++;
+    acr_frame_work_end();
 }
 
 static void gs_render_mono_cell(uint16_t bits)
@@ -3429,7 +3456,7 @@ void apple_cycle_renderer_before_record(uint64_t rec)
     }
 }
 
-static void on_frame_end(void) {
+static void on_frame_end_work(void) {
     /*
      * Full shadow modes publish at on_frame_start(), as soon as their frame
      * is complete. Only the normal legacy path waits for PAL completion here.
@@ -3459,7 +3486,23 @@ static void on_frame_end(void) {
     s_records_in_frame = 0u;
 }
 
-static void on_frame_start(void) {
+static void on_frame_start_work(void);
+
+static void on_frame_end(void)
+{
+    acr_frame_work_begin();
+    on_frame_end_work();
+    acr_frame_work_end();
+}
+
+static void on_frame_start(void)
+{
+    acr_frame_work_begin();
+    on_frame_start_work();
+    acr_frame_work_end();
+}
+
+static void on_frame_start_work(void) {
     /* Apply CPU0 settings before deriving this frame's format metadata, so
      * the badge tag and the pixels always describe the same frame. */
     apply_video_rom_if_changed();

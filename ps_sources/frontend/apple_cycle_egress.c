@@ -39,6 +39,14 @@ volatile uint32_t g_ace_ring_cpu_cycles   = 0U;
 volatile uint32_t g_ace_look_cpu_cycles   = 0U;
 volatile uint32_t g_ace_render_cpu_cycles = 0U;
 static uint32_t s_sample_divider = 0U;
+/* Exact time of the renderer's frame work. Weak, as the renderer hooks are:
+ * a build with no renderer has no such counter. */
+extern volatile uint32_t g_acr_frame_cpu_cycles __attribute__((weak));
+
+static inline uint32_t ace_frame_work_cycles(void)
+{
+    return (&g_acr_frame_cpu_cycles != NULL) ? g_acr_frame_cpu_cycles : 0U;
+}
 
 /* PMU cycle counter. CPU1 starts it in its main(). In a host build this
  * gives zero. */
@@ -365,14 +373,19 @@ void apple_cycle_egress_poll(void)
              * cached records contribute switch bits, never pixels. */
             {
                 const uint32_t render_start = sample ? ace_cpu_cycles() : 0U;
+                const uint32_t frame_start =
+                    sample ? ace_frame_work_cycles() : 0U;
                 if (apple_cycle_renderer_on_record_lookahead) {
                     apple_cycle_renderer_on_record_lookahead(rec, next1, next2);
                 } else if (apple_cycle_renderer_on_record) {
                     apple_cycle_renderer_on_record(rec);
                 }
                 if (sample) {
+                    /* The frame work is counted exactly elsewhere. */
                     g_ace_render_cpu_cycles +=
-                        (ace_cpu_cycles() - render_start) << ACE_SAMPLE_SHIFT;
+                        ((ace_cpu_cycles() - render_start) -
+                         (ace_frame_work_cycles() - frame_start))
+                            << ACE_SAMPLE_SHIFT;
                 }
             }
 

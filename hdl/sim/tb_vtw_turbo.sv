@@ -147,6 +147,7 @@ module tb_vtw_turbo;
     logic [16:0] video_record_addr;
     logic [7:0] video_record_data;
     logic video_record_ready = 1'b1;
+    logic video_no_mirror = 1'b0;
     logic post_main_wide = 1'b0;
     logic overlay_capture_armed = 1'b0;
     logic bus_owned;
@@ -231,6 +232,7 @@ module tb_vtw_turbo;
         .video_record_addr(video_record_addr),
         .video_record_data(video_record_data),
         .video_record_ready(video_record_ready),
+        .video_no_mirror(video_no_mirror),
         .video_direct_active(video_direct_active),
         .overlay_capture_armed(overlay_capture_armed),
         .overlay_capture_bank_aux(1'b0),
@@ -350,7 +352,8 @@ module tb_vtw_turbo;
             arm_responses <= 0;
             checked_display_cycles <= 0;
         end else begin
-            check((video_record_valid && video_record_ready) ===
+            check(video_no_mirror ||
+                  (video_record_valid && video_record_ready) ===
                   (dut.video_coalescer_i.write_valid &&
                    dut.video_coalescer_i.write_ready),
                   "renderer and motherboard mirror accepted different records");
@@ -527,6 +530,7 @@ module tb_vtw_turbo;
         ramworks_en = 1'b0;
         video_record_enable = 1'b0;
         video_record_ready = 1'b1;
+        video_no_mirror = 1'b0;
         post_main_wide = 1'b0;
         overlay_capture_armed = 1'b0;
         check_video_banks = 1'b0;
@@ -1280,6 +1284,46 @@ module tb_vtw_turbo;
         $display("VTW TURBO VIDEO BANKS/BACKPRESSURE PASS");
     endtask
 
+    // ONE//e: the same writes go to the renderer only. Nothing is posted
+    // to the bus, nothing is pending, and the switch accesses do not wait.
+    task automatic direct_video_no_mirror;
+        integer started, mirrored_clocks, plain_clocks;
+        for (int pass = 0; pass < 2; pass++) begin
+            begin_program(2'd3);
+            video_record_enable = 1'b1;
+            video_no_mirror = (pass == 1);
+            emit_hgr_mode();
+            emit_video_fill(8'h5A, 4);
+            absolute(8'h8D, 16'hC005);
+            emit_video_fill(8'hA5, 2);
+            absolute(8'h8D, 16'hC004);
+            absolute(8'h8D, 16'hA10F);
+            halt_loop();
+            start_program();
+            started = fabric_cycles;
+            wait_marker(15, 1, 600000);
+            if (pass == 0) begin
+                mirrored_clocks = marker_cycle[15] - started;
+                await_video_drain();
+            end else begin
+                plain_clocks = marker_cycle[15] - started;
+                check(direct_video_writes == 1536 && cnt_posted_writes == 0 &&
+                      !dut.video_mirror_pending && dut.video_all_drained,
+                      "ONE//e video writes reached the bus or stayed pending");
+                for (int i = 0; i < 1024; i++)
+                    check(renderer_shadow[17'h02000+i] === 8'h5A,
+                          "MAIN direct record lost with no mirror");
+                for (int i = 0; i < 512; i++)
+                    check(renderer_shadow[17'h12000+i] === 8'hA5,
+                          "AUX direct record lost with no mirror");
+            end
+        end
+        check(plain_clocks < mirrored_clocks,
+              "no mirror was not faster than the mirror");
+        $display("VTW TURBO VIDEO NO MIRROR PASS: %0d clocks, with mirror %0d",
+                 plain_clocks, mirrored_clocks);
+    endtask
+
     task automatic direct_video_exit(input bit handback);
         integer stopped_cycles;
         begin_program(2'd3);
@@ -1863,6 +1907,7 @@ module tb_vtw_turbo;
         for (int kind = 0; kind < 9; kind++)
             direct_video_admission(kind);
         direct_video_banks();
+        direct_video_no_mirror();
         direct_video_exit(1'b0);
         direct_video_exit(1'b1);
         direct_video_abort(1'b0);

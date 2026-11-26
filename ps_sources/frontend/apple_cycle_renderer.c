@@ -96,6 +96,7 @@ static void acr_slot_to_ddr(uint32_t base, uint32_t bytes)
 #if defined(__arm__)
     const uint32_t end = base + bytes;
 
+    base &= ~(ACR_CACHE_LINE_BYTES - 1u);
     for (uint32_t a = base; a < end; a += ACR_CACHE_LINE_BYTES) {
         __asm__ volatile ("mcr p15, 0, %0, c7, c10, 1" : : "r"(a));
     }
@@ -115,6 +116,70 @@ static void acr_slot_to_ddr(uint32_t base, uint32_t bytes)
     (void)base;
     (void)bytes;
 #endif
+}
+
+/* The full transfer of each frame took 20% of the renderer core. Most rows
+ * do not change from one frame to the next, so the core keeps two sums of
+ * each row of each slot as DDR has it, and sends a row to DDR only when
+ * its sums differ. The rule that keeps this safe: a slot whose cached
+ * pixels changed without a check of all rows has no valid sums. The cache
+ * can write such pixels to DDR at any time. */
+#define ACR_ROW_BYTES  (ATN_SCRATCH_ROW_PIXELS * 4u)
+#define ACR_ROW_COUNT  COMP_APPLE_VISIBLE_HEIGHT
+
+static uint32_t s_row_sum[COMP_APPLE_SLOT_COUNT][ACR_ROW_COUNT][2];
+static uint8_t  s_row_sum_valid[COMP_APPLE_SLOT_COUNT][ACR_ROW_COUNT];
+static uint8_t  s_row_done[ACR_ROW_COUNT];     /* checked in this frame */
+static uint8_t  s_slot_open[COMP_APPLE_SLOT_COUNT];
+
+/* Call when a frame starts to write to a slot. */
+static void acr_slot_open(uint32_t slot)
+{
+    if (s_slot_open[slot] != 0u) {
+        /* The last frame in this slot had no publish. */
+        memset(s_row_sum_valid[slot], 0, sizeof(s_row_sum_valid[slot]));
+    }
+    s_slot_open[slot] = 1u;
+    memset(s_row_done, 0, sizeof(s_row_done));
+}
+
+static void acr_row_to_ddr(uint32_t slot, uint32_t row)
+{
+    const uint32_t base = comp_apple_slot_addr[slot] + row * ACR_ROW_BYTES;
+    const uint32_t *p = (const uint32_t *)(uintptr_t)base;
+    uint32_t a = 0u;
+    uint32_t b = 0u;
+
+    for (uint32_t i = 0u; i < ATN_SCRATCH_ROW_PIXELS; ++i) {
+        a += p[i];
+        b += a;
+    }
+    s_row_done[row] = 1u;
+    if (s_row_sum_valid[slot][row] != 0u &&
+        s_row_sum[slot][row][0] == a && s_row_sum[slot][row][1] == b) {
+        return;
+    }
+    acr_slot_to_ddr(base, ACR_ROW_BYTES);
+    s_row_sum[slot][row][0] = a;
+    s_row_sum[slot][row][1] = b;
+    s_row_sum_valid[slot][row] = 1u;
+}
+
+/* Put the finished frame of the writer slot in DDR. */
+static void acr_frame_to_ddr(uint32_t slot, uint32_t plain_legacy)
+{
+    if (plain_legacy != 0u) {
+        for (uint32_t row = 0u; row < ACR_ROW_COUNT; ++row) {
+            if (s_row_done[row] == 0u) {
+                acr_row_to_ddr(slot, row);
+            }
+        }
+    } else {
+        acr_slot_to_ddr(comp_apple_slot_addr[slot], COMP_APPLE_BYTES);
+        memset(s_row_sum_valid[slot], 0, sizeof(s_row_sum_valid[slot]));
+    }
+    s_slot_open[slot] = 0u;
+    memset(s_row_done, 0, sizeof(s_row_done));
 }
 volatile uint32_t g_acr_unknown_modes     = 0u;
 volatile uint32_t g_acr_frame_edges_seen  = 0u;
@@ -3139,11 +3204,10 @@ static void publish_current_frame(void)
 {
     /* Put the finished frame in DDR before CPU0 can see the slot and its
      * matching format metadata. The plain legacy frame fills only the first
-     * part of the slot. */
-    acr_slot_to_ddr(comp_apple_slot_addr[s_cached_writer_slot],
-                    (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY &&
-                     s_legacy_flip_q == 0u) ?
-                        COMP_APPLE_LEGACY_BYTES : COMP_APPLE_BYTES);
+     * part of the slot, and most of its rows are already there. */
+    acr_frame_to_ddr(s_cached_writer_slot,
+                     (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY &&
+                      s_legacy_flip_q == 0u) ? 1u : 0u);
     apple_fb_writer_publish_frame_detail(s_frame_display_mode,
                                          s_frame_format_detail,
                                          s_vidhd_border_color);
@@ -3281,6 +3345,7 @@ static void gs_raster_begin_frame(void)
     apply_video_rom_if_changed();
     apply_video_settings_if_changed();
     s_cached_writer_slot = apple_fb_writer_slot();
+    acr_slot_open(s_cached_writer_slot);
     appletini_ntsc_set_framebuffer(
         (uint32_t *)(uintptr_t)comp_apple_slot_addr[s_cached_writer_slot]);
     s_frame_display_mode = APPLE_FB_DISPLAY_MODE_GS;
@@ -3403,6 +3468,7 @@ static void on_frame_start(void) {
     /* Bind the NTSC core to the fresh writer slot selected by the handoff
      * before the first cycle of the frame writes pixels. */
     s_cached_writer_slot = apple_fb_writer_slot();
+    acr_slot_open(s_cached_writer_slot);
 
     uint32_t *slot_addr =
         (uint32_t *)(uintptr_t)comp_apple_slot_addr[s_cached_writer_slot];
@@ -3895,6 +3961,19 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
      * lines. s_prev_line supplies the transition already used for frame-edge
      * detection. */
     if (s_chroma_prev_line != render_line) {
+        /* The row of line N-2 is complete: line N-1 has written its right
+         * border. Send it to DDR now if it changed, so that little work
+         * stays for the frame end. If the line number went back, rows can
+         * change again: check them all at the frame end. */
+        if (render_line < s_chroma_prev_line) {
+            memset(s_row_done, 0, sizeof(s_row_done));
+        } else if (render_line >= 2u) {
+            const uint32_t row = render_line - 2u + ATN_BORDER_V_LINES;
+
+            if (s_row_done[row] == 0u) {
+                acr_row_to_ddr(s_cached_writer_slot, row);
+            }
+        }
         g_nColorPhaseNTSC      = 0;
         g_nLastColumnPixelNTSC = 0;
         g_nSignalBitsNTSC      = 0;

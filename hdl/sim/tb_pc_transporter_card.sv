@@ -37,6 +37,7 @@ module tb_pc_transporter_card;
     logic [7:0] mem_req_wstrb;
     logic mem_rsp_valid, mem_rsp_error;
     logic virtual_bus = 1'b0;
+    logic own_bus_master = 1'b0;
     logic gs_profile = 1'b0;
     // Wrapper pre-sample address and load strobes for the GS decode.
     logic [15:0] gs_sample_addr = 16'h0000;
@@ -79,7 +80,7 @@ module tb_pc_transporter_card;
         .READ_WAIT_CYCLES(READ_WAIT), .VIRTUAL_READ_WAIT_CYCLES(VIRTUAL_READ_WAIT)
     ) dut (
         .clk(clk), .rstn(rstn), .ab_read(card_read), .sss(sss),
-        .virtual_bus(virtual_bus),
+        .virtual_bus(virtual_bus), .own_bus_master(own_bus_master),
         .card_enabled(card_enabled), .slot_assign(3'd5),
         .as_common(as_common), .as_client(axi), .mem_req_valid(mem_req_valid),
         .mem_req_ready(mem_req_ready), .mem_req_write(mem_req_write),
@@ -782,6 +783,21 @@ module tb_pc_transporter_card;
             $fatal(1, "DMA cycle did not use the authoritative read");
         end
         finish_cycle('0);
+
+        // The vTW engine as physical master holds /DMA low. Its early
+        // address is good, so the read must start at the early sample.
+        own_bus_master = 1'b1;
+        alias_reads_before = read_count;
+        start_early_read(16'hCF04, 1'b0);
+        repeat (8) @(negedge clk);
+        if (read_count == alias_reads_before)
+            $fatal(1, "Own-master DMA cycle did not start an early read");
+        confirm_early_read(16'hCF04);
+        if (!ab_write.wr_data_en || ab_write.wr_data != 8'hE6) begin
+            $fatal(1, "Own-master early read did not reply at the late sample");
+        end
+        finish_cycle('0);
+        own_bus_master = 1'b0;
 
         apple_write(16'hCF0E, 8'h02);
         apple_write(16'hCF0F, 8'h01);

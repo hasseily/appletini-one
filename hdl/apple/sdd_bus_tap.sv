@@ -36,6 +36,8 @@ module sdd_bus_tap (
     input  logic                                    resetn,
 
     input  logic                                    enable,
+    // ONE//e: the bus is private and its idle cycles all read $FFFF.
+    input  logic                                    virtual_bus = 1'b0,
     input  globals::AppleBus_read                   ab_read,
     /* {route_cache, bank_nonzero, route_rom} sampled from the live
      * soft-switch translator -- lets the PS audit routing decisions
@@ -77,7 +79,9 @@ module sdd_bus_tap (
     logic       storm_frozen_q;
     /* Jam detector: a KIL-parked 6502 repeats one address forever
      * (bench: R FFFF for the whole ring, onset lost). 64 identical
-     * consecutive addresses never occur in real execution. */
+     * consecutive addresses never occur in real execution on a physical
+     * bus. The ONE//e bus repeats $FFFF while its CPU works without a bus
+     * cycle, so the detector is off there. */
     logic [15:0] jam_addr_q;
     logic [5:0]  jam_count_q;
     wire vec_fetch = ab_read.data_en && ab_read.rw &&
@@ -90,7 +94,9 @@ module sdd_bus_tap (
             jam_addr_q     <= 16'h0000;
             jam_count_q    <= 6'd0;
         end else if (!storm_frozen_q && ab_read.data_en) begin
-            if (ab_read.addr == jam_addr_q) begin
+            if (virtual_bus) begin
+                jam_count_q <= 6'd0;
+            end else if (ab_read.addr == jam_addr_q) begin
                 if (jam_count_q == 6'd63) begin
                     storm_frozen_q <= 1'b1;
                 end else begin

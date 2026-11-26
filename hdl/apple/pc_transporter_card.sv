@@ -13,6 +13,9 @@ module pc_transporter_card #(
     input  globals::SoftSwitchState  sss,
     input  logic                     card_enabled,
     input  logic                     virtual_bus,
+    // The vTW engine drives the physical address lines. It sets a new
+    // address early in PHI1, so the early sample is that cycle's address.
+    input  logic                     own_bus_master = 1'b0,
     input  logic [2:0]               slot_assign,
     input  globals::AxiSimple_common as_common,
     AxiSimple_if.client              as_client,
@@ -669,11 +672,15 @@ module pc_transporter_card #(
 
     wire cycle_closed = !c8_selected || ab_read.addr_en || ab_read.data_en;
     wire reply_boundary = cycle_closed || ab_read.serve_en;
-    // A physical DMA master can leave an old address in the early sample.
-    // The virtual bus captures its owner, address and R/W before addr_en,
-    // including vTW DMA cycles. Only the later sample can drive data.
+    // A foreign physical DMA master can leave an old address in the early
+    // sample. The vTW engine as physical master does not: /DMA is low for
+    // all its cycles, so without this exception no RAM read could start
+    // early in an accelerated host. The virtual bus captures its owner,
+    // address and R/W before addr_en, including vTW DMA cycles. Only the
+    // later sample can drive data.
     wire early_candidate = c8_selected && ab_read.cycle_valid && ab_read.addr_en &&
-                           ab_read.rw_early && (ab_read.dma || virtual_bus_q) &&
+                           ab_read.rw_early &&
+                           (ab_read.dma || virtual_bus_q || own_bus_master) &&
                            !ab_read.serve_en &&
                            is_ram_window(ab_read.addr_early) &&
                            window_in_range_q[window_index(ab_read.addr_early)] &&

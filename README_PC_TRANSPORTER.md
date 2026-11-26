@@ -85,7 +85,7 @@ On F1.3.7, `PCTTEST.PO` reached its first V30 tests in ONE//e at 1 MHz. The live
 
 F1.3.7 rejects early read requests while `/DMA` is low. ONE//e presents the vTW CPU as a virtual DMA master, so the Transporter has to start its DDR reads at the later address sample. Its 12-clock timeout then expires before the virtual bus captures the reply.
 
-The ONE//e fix uses the early address that the virtual bus has already captured, even when vTW owns that bus. A read that starts at phase 73 can publish its reply through phase 122. The virtual bus captures the byte at phase 123. The physical bus keeps its 12-clock timeout and rejects early requests from physical DMA masters.
+The ONE//e fix uses the early address that the virtual bus has already captured, even when vTW owns that bus. A read that starts at phase 73 can publish its reply through phase 122. The virtual bus captures the byte at phase 123. The physical bus keeps its 12-clock timeout and rejects early requests from physical DMA masters. F1.3.11dev31 adds one exception: when the vTW engine is the physical bus master, the card accepts its early address. Without it, no RAM read could start early in a host with vTW on, and each read was late.
 
 The regression uses the real ONE//e bus and HP3 bridge with a mock DDR target. It captures `$A5` on the last safe reply and counts one miss on the next clock. The first two Vivado runs with this fix missed timing, at −0.006 and −0.182 ns. The data-phase change above closed timing. The fix still needs a board run.
 

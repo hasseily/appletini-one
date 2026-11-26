@@ -1301,6 +1301,7 @@ module apple_top(
         .clk                      (clk),
         .resetn                   (rstn[0]),
         .enable                   (sdd_cfg_enable_q),
+        .virtual_bus              (onee_enable_effective),
         .ab_read                  (ab_read),
         .route_info               ({
             (sss.route_kind == globals::APPLE_ROUTE_CACHE) && sss.addr_decode_en,
@@ -1862,6 +1863,7 @@ module apple_top(
         .sss(sss),
         .card_enabled(pct_bus_enable),
         .virtual_bus(onee_enable_effective),
+        .own_bus_master(vtw_bus_owned),
         .slot_assign(3'h5),
         .as_common(as_common),
         .as_client(pc_transporter_as_client),

@@ -356,8 +356,14 @@ module disk2_card (
     /* Q7 is the Disk II write-mode latch. Preserve the old physical timing
      * for the whole write interval; the vTW also routes every CPU write and
      * every odd-address read through the Apple bus. */
+    // The reset level is one clock old here. It keeps the bus reset mux
+    // off the vTW speed selection. Q7 and the motor state stay live.
+    logic vtw_res_ok_q;
+    always_ff @(posedge clk) begin
+        vtw_res_ok_q <= enabled && ab_read.res;
+    end
     assign vtw_write_timing_active =
-        enabled && ab_read.res && vtw_drive_spinning_q && q7_q;
+        vtw_res_ok_q && vtw_drive_spinning_q && q7_q;
 
     /* A read-accelerated session may pause virtual time while CPU0 stages a
      * new track or while the DDR line cache catches up. This is a transparent

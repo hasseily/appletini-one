@@ -1854,79 +1854,9 @@ module vtw_core_top (
         assign turbo_perf[32*n +: 32] = perf_count[n];
     end
 
-    // Registered predicates, as for the counters above.
-    logic [4:0]  diag_events_q;
-    logic        diag_sync_q, diag_hold_q;
-    logic [31:0] diag_count [0:4];
-    always_ff @(posedge clk) begin
-        if (!rstn || dbg_clear) begin
-            diag_events_q <= '0;
-            diag_sync_q <= 1'b0;
-            diag_hold_q <= 1'b0;
-            for (int n = 0; n < 5; n++) diag_count[n] <= '0;
-        end else begin
-            diag_sync_q <= video_sync_active;
-            diag_hold_q <= rw_hold_q;
-            diag_events_q <= {
-                rw_hold_q,
-                rw_hold_q && !diag_hold_q,
-                core_active && video_selected && (xstate_q == X_POST_STALL) &&
-                    !video_record_ready,
-                video_sync_active,
-                video_sync_active && !diag_sync_q
-            };
-            for (int n = 0; n < 5; n++) begin
-                if (diag_events_q[n])
-                    diag_count[n] <= diag_count[n] + 32'd1;
-            end
-        end
-    end
-    for (genvar n = 0; n < 5; n++) begin : diag_readback
-        assign video_diag[32*n +: 32] = diag_count[n];
-    end
-
-    // Number and longest length of the waits: totals cannot tell a few long
-    // waits from many short ones.
-    logic        diag_qfull_q, diag_record_q;
-    logic [31:0] diag_qfull_events, diag_qfull_run, diag_qfull_max;
-    logic [31:0] diag_drain_run, diag_drain_max, diag_records;
-    always_ff @(posedge clk) begin
-        if (!rstn || dbg_clear) begin
-            diag_qfull_q <= 1'b0;
-            diag_record_q <= 1'b0;
-            diag_qfull_events <= '0;
-            diag_qfull_run <= '0;
-            diag_qfull_max <= '0;
-            diag_drain_run <= '0;
-            diag_drain_max <= '0;
-            diag_records <= '0;
-        end else begin
-            diag_qfull_q <= diag_events_q[2];
-            diag_record_q <= video_record_valid && video_record_ready;
-            if (diag_events_q[2]) begin
-                diag_qfull_run <= diag_qfull_run + 32'd1;
-                if (!diag_qfull_q)
-                    diag_qfull_events <= diag_qfull_events + 32'd1;
-            end else begin
-                diag_qfull_run <= '0;
-                if (diag_qfull_run > diag_qfull_max)
-                    diag_qfull_max <= diag_qfull_run;
-            end
-            if (diag_events_q[1]) begin
-                diag_drain_run <= diag_drain_run + 32'd1;
-            end else begin
-                diag_drain_run <= '0;
-                if (diag_drain_run > diag_drain_max)
-                    diag_drain_max <= diag_drain_run;
-            end
-            if (diag_record_q)
-                diag_records <= diag_records + 32'd1;
-        end
-    end
-    assign video_diag[191:160] = diag_qfull_events;
-    assign video_diag[223:192] = diag_qfull_max;
-    assign video_diag[255:224] = diag_drain_max;
-    assign video_diag[287:256] = diag_records;
+    // The diagnostic counters of the flicker work are removed. The port
+    // stays so that the register map does not change.
+    assign video_diag = '0;
 
     always_ff @(posedge clk) begin
         if (!rstn) begin

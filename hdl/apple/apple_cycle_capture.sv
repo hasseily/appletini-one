@@ -394,10 +394,23 @@ module apple_cycle_capture (
     // a direct byte must not overtake its one-clock packing pipeline.
     // The DATA strobe covers every raw record source without placing the
     // address/overlay decode on the direct-write acceptance path.
-    assign direct_ready = resetn && !soft_reset && !fifo_full &&
-        !native_gs_observe && !native_gs_active && !native_gs_active_q &&
-        !native_state_retry_q && !direct_hold &&
-        (fifo_write_count < 13'(FIFO_DEPTH - 32)) &&
+    //
+    // The mode, hold and fill-level terms are one clock old. The level
+    // limit is one lower than before, because the level is one clock old
+    // and one clock adds one record at most. At least 32 places stay free.
+    // A mode or reset change that arrives in that one clock can admit one
+    // more direct record; the capture reset that follows removes it. The
+    // terms that keep record order (pending and incoming records, the DATA
+    // edge, the GS state record) stay live.
+    logic direct_slow_ok_q;
+    always_ff @(posedge clk) begin
+        direct_slow_ok_q <= resetn && !soft_reset && !native_gs_observe &&
+                            !direct_hold &&
+                            (fifo_write_count < 13'(FIFO_DEPTH - 33));
+    end
+    assign direct_ready = direct_slow_ok_q &&
+        !native_gs_active && !native_gs_active_q &&
+        !native_state_retry_q &&
         !pending_record_valid && !incoming_valid && !ab_read.data_en;
     wire direct_push = (direct_valid === 1'b1) && direct_ready;
 

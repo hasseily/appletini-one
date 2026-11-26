@@ -914,9 +914,20 @@ module apple_top(
     always_ff @(posedge clk)
         phasor_location2_q <= phasor_location2;
     wire phasor_slot4_enabled = card_slot4_bus_enable && !phasor_location2;
-    wire phasor_enabled = rstn[2] && (phasor_location2_q == phasor_location2) &&
+    wire phasor_enabled_now = rstn[2] &&
         (phasor_location2 ? (card_slot2_bus_enable && slot2_phasor_selected) :
                             phasor_slot4_enabled);
+    // Register the card's own enable, as for slot 5. It keeps the slot
+    // policy decode off the card logic and off its IRQ path into the vTW
+    // core. apple_bus_client_policy_gate still removes every Phasor output
+    // from the physical bus in the same clock when policy disables it.
+    // A location move still blocks access in the same clock.
+    logic phasor_enabled_q;
+    always_ff @(posedge clk) begin
+        phasor_enabled_q <= phasor_enabled_now;
+    end
+    wire phasor_enabled = phasor_enabled_q &&
+                          (phasor_location2_q == phasor_location2);
     wire [7:0] no_slot_clock_configured_slots =
         ((card_slot2_bus_enable && (slot2_mouse_selected || slot2_phasor_selected)) ?
             8'h04 : 8'h00) |
@@ -2392,11 +2403,17 @@ module apple_top(
     end
 
     // ONE//e has no boot-menu handoff: Slot 6 ON is its Disk II owner.
-    assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&
-                              card_slot6_bus_enable &&
+    // The slot policy and mode terms are one clock old. Core run and bus
+    // ownership stay live, so ownership loss still stops the path at once.
+    logic vtw_disk2_policy_q;
+    always_ff @(posedge clk) begin
+        vtw_disk2_policy_q <= card_slot6_bus_enable &&
                               (onee_enable_effective ||
                                disk2_active_timing_q) &&
                               !vtw_ctrl_q[7];
+    end
+    assign vtw_disk2_active = vtw_core_run_eff && vtw_bus_owned &&
+                              vtw_disk2_policy_q;
     wire vtw_slot6_boot_probe =
         vtw_disk2_boot_scan_q && vtw_bus_owned &&
         ab_read.serve_en && ab_read.rw &&
@@ -3438,15 +3455,6 @@ module apple_top(
                 CARD_CTRL_REG_TURBO_PERF6: as_client_rdata_q <= vtw_turbo_perf[223:192];
                 CARD_CTRL_REG_TURBO_PERF7: as_client_rdata_q <= vtw_turbo_perf[255:224];
                 CARD_CTRL_REG_TURBO_PERF8: as_client_rdata_q <= vtw_turbo_perf[287:256];
-                CARD_CTRL_REG_VIDEO_DIAG0: as_client_rdata_q <= vtw_video_diag[31:0];
-                CARD_CTRL_REG_VIDEO_DIAG1: as_client_rdata_q <= vtw_video_diag[63:32];
-                CARD_CTRL_REG_VIDEO_DIAG2: as_client_rdata_q <= vtw_video_diag[95:64];
-                CARD_CTRL_REG_VIDEO_DIAG3: as_client_rdata_q <= vtw_video_diag[127:96];
-                CARD_CTRL_REG_VIDEO_DIAG4: as_client_rdata_q <= vtw_video_diag[159:128];
-                CARD_CTRL_REG_VIDEO_DIAG5: as_client_rdata_q <= vtw_video_diag[191:160];
-                CARD_CTRL_REG_VIDEO_DIAG6: as_client_rdata_q <= vtw_video_diag[223:192];
-                CARD_CTRL_REG_VIDEO_DIAG7: as_client_rdata_q <= vtw_video_diag[255:224];
-                CARD_CTRL_REG_VIDEO_DIAG8: as_client_rdata_q <= vtw_video_diag[287:256];
                 CARD_CTRL_REG_VTW_JOYSTICK_PADDLES,
                 CARD_CTRL_REG_VTW_JOYSTICK_CONTROL:
                     as_client_rdata_q <= vtw_joystick_ps_rdata;

@@ -1468,25 +1468,6 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(6)),
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(7)));
     vtw_status_puts(uart_base, line);
-    /* Diagnostic counters of the video path; clocks are 7.5 ns each. */
-    snprintf(line, sizeof(line),
-             "vtw: diag drains=%lu drainclk=%lu qfullclk=%lu\r\n",
-             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(0)),
-             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(1)),
-             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(2)));
-    vtw_status_puts(uart_base, line);
-    snprintf(line, sizeof(line),
-             "vtw: diag holds=%lu holdclk=%lu\r\n",
-             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(3)),
-             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(4)));
-    vtw_status_puts(uart_base, line);
-    snprintf(line, sizeof(line),
-             "vtw: diag qwaits=%lu qmaxclk=%lu drainmaxclk=%lu records=%lu\r\n",
-             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(5)),
-             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(6)),
-             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(7)),
-             (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(8)));
-    vtw_status_puts(uart_base, line);
     {
         /* Load of the renderer core in its last interval of about 1 s. */
         apple_fb_load_t load;

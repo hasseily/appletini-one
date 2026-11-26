@@ -74,6 +74,48 @@ static inline uint32_t acr_cpu_cycles(void)
     return 0u;
 #endif
 }
+
+/* The frame slots are cached on the renderer core: uncached pixel stores
+ * took about 40% of this core and it could not follow the beam. CPU0
+ * reads the slots uncached, direct from DDR, so each finished frame must
+ * go to DDR before its publish. The USE_AMP library has no L2 functions;
+ * this code cleans the L1 lines and then tells the L2 controller (PL310)
+ * to clean the same lines. The clean-line command is atomic in this
+ * controller revision, so the two cores need no lock. A clean keeps the
+ * lines valid in the caches. */
+#define ACR_CACHE_LINE_BYTES   32u
+#define ACR_L2CC_BASE          0xF8F02000u
+#define ACR_L2CC_SYNC          (ACR_L2CC_BASE + 0x730u)
+#define ACR_L2CC_INV_WAY       (ACR_L2CC_BASE + 0x77Cu)
+#define ACR_L2CC_CLEAN_PA      (ACR_L2CC_BASE + 0x7B0u)
+#define ACR_L2CC_CLEAN_WAY     (ACR_L2CC_BASE + 0x7BCu)
+#define ACR_L2CC_CLEAN_INV_WAY (ACR_L2CC_BASE + 0x7FCu)
+
+static void acr_slot_to_ddr(uint32_t base, uint32_t bytes)
+{
+#if defined(__arm__)
+    const uint32_t end = base + bytes;
+
+    for (uint32_t a = base; a < end; a += ACR_CACHE_LINE_BYTES) {
+        __asm__ volatile ("mcr p15, 0, %0, c7, c10, 1" : : "r"(a));
+    }
+    ACR_DSB();
+    /* CPU0 does a full flush by way only before a restart. The controller
+     * rejects line commands during it, so wait for its end. */
+    while ((*(volatile uint32_t *)ACR_L2CC_CLEAN_INV_WAY |
+            *(volatile uint32_t *)ACR_L2CC_CLEAN_WAY |
+            *(volatile uint32_t *)ACR_L2CC_INV_WAY) != 0u) {
+    }
+    for (uint32_t a = base; a < end; a += ACR_CACHE_LINE_BYTES) {
+        *(volatile uint32_t *)ACR_L2CC_CLEAN_PA = a;
+    }
+    *(volatile uint32_t *)ACR_L2CC_SYNC = 0u;
+    ACR_DSB();
+#else
+    (void)base;
+    (void)bytes;
+#endif
+}
 volatile uint32_t g_acr_unknown_modes     = 0u;
 volatile uint32_t g_acr_frame_edges_seen  = 0u;
 
@@ -3095,9 +3137,13 @@ static void handle_gs_state_record(uint64_t rec)
 
 static void publish_current_frame(void)
 {
-    /* Slot memory is non-cacheable, but order all completed pixel stores
-     * before exposing the slot and its matching format metadata to CPU0. */
-    ACR_DSB();
+    /* Put the finished frame in DDR before CPU0 can see the slot and its
+     * matching format metadata. The plain legacy frame fills only the first
+     * part of the slot. */
+    acr_slot_to_ddr(comp_apple_slot_addr[s_cached_writer_slot],
+                    (s_frame_display_mode == APPLE_FB_DISPLAY_MODE_LEGACY &&
+                     s_legacy_flip_q == 0u) ?
+                        COMP_APPLE_LEGACY_BYTES : COMP_APPLE_BYTES);
     apple_fb_writer_publish_frame_detail(s_frame_display_mode,
                                          s_frame_format_detail,
                                          s_vidhd_border_color);
@@ -3505,33 +3551,16 @@ static void on_frame_start(void) {
 /* ---------- Init ---------- */
 
 int apple_cycle_renderer_init(void) {
-    /* Mark the apple FB slot region non-cacheable on the calling
-     * core (CPU1 in AMP, CPU0 in single-core builds). The slots
-     * are written by the renderer here and read by the compositor
-     * on the other core; if either side caches them we have to
-     * flush/invalidate explicitly, which on USE_AMP=1 BSPs cannot
-     * touch L2 (xil_cache.c L2 ops are stripped from libxil under
-     * USE_AMP). Marking the region uncached on both cores makes
-     * the pixel writes go straight to DDR and the compositor's
-     * reads come straight from DDR. The cost is store coalescing
-     * (no write-back buffer combining), which is acceptable here:
-     * the compositor's 1080p output ring is the dominant DDR
-     * bandwidth consumer, not the small Apple source slots.
-     *
-     * Section size for Xil_SetTlbAttributes is 1 MB, and the three
-     * slots are each 1 MB aligned, so we mark all three sections
-     * individually. */
-    for (uint32_t i = 0u; i < COMP_APPLE_SLOT_COUNT; ++i) {
-        Xil_SetTlbAttributes(comp_apple_slot_addr[i], NORM_NONCACHE);
-    }
-
-    /* Zero the slots after applying the non-cacheable mapping so writes
-     * reach DDR directly. */
+    /* The renderer writes the slots here and the compositor reads them on
+     * the other core. Up to F1.3.11dev25 both cores had the slots uncached.
+     * Since F1.3.11dev26 the renderer core keeps the default cached mapping
+     * of the slots and sends each finished frame to DDR itself; see
+     * acr_slot_to_ddr(). CPU0 still reads the slots uncached. */
     for (uint32_t i = 0u; i < COMP_APPLE_SLOT_COUNT; ++i) {
         void *slot = (void *)(uintptr_t)comp_apple_slot_addr[i];
         memset(slot, 0, COMP_APPLE_BYTES);
+        acr_slot_to_ddr(comp_apple_slot_addr[i], COMP_APPLE_BYTES);
     }
-    ACR_DSB();
 
     /* Initialize NTSC chroma tables and the pixel-double mask. */
     appletini_csbits_init();

@@ -38,6 +38,7 @@ volatile uint32_t g_poll_calls         = 0U;
 volatile uint32_t g_ace_ring_cpu_cycles   = 0U;
 volatile uint32_t g_ace_look_cpu_cycles   = 0U;
 volatile uint32_t g_ace_render_cpu_cycles = 0U;
+static uint32_t s_sample_divider = 0U;
 
 /* PMU cycle counter. CPU1 starts it in its main(). In a host build this
  * gives zero. */
@@ -269,14 +270,19 @@ void apple_cycle_egress_poll(void)
             uint64_t next1 = 0ULL;
             uint64_t next2 = 0ULL;
             int lookahead_ready = 1;
+            const uint32_t sample =
+                ((++s_sample_divider) & ((1U << ACE_SAMPLE_SHIFT) - 1U)) == 0U;
 
             if (apple_cycle_renderer_needs_phase_lookahead &&
                 apple_cycle_renderer_on_record_lookahead &&
                 apple_cycle_renderer_needs_phase_lookahead(rec)) {
-                const uint32_t look_start = ace_cpu_cycles();
+                const uint32_t look_start = sample ? ace_cpu_cycles() : 0U;
                 lookahead_ready = egress_find_phase_lookahead(
                     s_lookahead_batch, batch_count, i, &next1, &next2);
-                g_ace_look_cpu_cycles += ace_cpu_cycles() - look_start;
+                if (sample) {
+                    g_ace_look_cpu_cycles +=
+                        (ace_cpu_cycles() - look_start) << ACE_SAMPLE_SHIFT;
+                }
             }
             if (!lookahead_ready) {
                 /* Normally only the final two frame records reach here. If
@@ -358,13 +364,16 @@ void apple_cycle_egress_poll(void)
             /* Apply only this record's shadow write before dispatch. Future
              * cached records contribute switch bits, never pixels. */
             {
-                const uint32_t render_start = ace_cpu_cycles();
+                const uint32_t render_start = sample ? ace_cpu_cycles() : 0U;
                 if (apple_cycle_renderer_on_record_lookahead) {
                     apple_cycle_renderer_on_record_lookahead(rec, next1, next2);
                 } else if (apple_cycle_renderer_on_record) {
                     apple_cycle_renderer_on_record(rec);
                 }
-                g_ace_render_cpu_cycles += ace_cpu_cycles() - render_start;
+                if (sample) {
+                    g_ace_render_cpu_cycles +=
+                        (ace_cpu_cycles() - render_start) << ACE_SAMPLE_SHIFT;
+                }
             }
 
             g_records_processed++;

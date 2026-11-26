@@ -3879,7 +3879,10 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
     /* Map ALTCHARSET soft-switch to g_nVideoCharSet (0/1). */
     g_nVideoCharSet = sw_altcharset(sw) ? 1 : 0;
 
-    const uint32_t pixel_start = acr_cpu_cycles();
+    static uint32_t pixel_divider = 0u;
+    const uint32_t pixel_sample =
+        ((++pixel_divider) & ((1u << ACE_SAMPLE_SHIFT) - 1u)) == 0u;
+    const uint32_t pixel_start = pixel_sample ? acr_cpu_cycles() : 0u;
     const render_mode_t mode = pick_mode(sw, g_nVideoClockVert);
     position_video_address(mode);
 
@@ -3894,7 +3897,10 @@ static void apple_cycle_renderer_dispatch_record(uint64_t rec) {
     }
     emit_shifted_right_edge_pixels(mode);
     restore_left_border(render_line, render_cycle);
-    g_acr_pixel_cpu_cycles += acr_cpu_cycles() - pixel_start;
+    if (pixel_sample) {
+        g_acr_pixel_cpu_cycles +=
+            (acr_cpu_cycles() - pixel_start) << ACE_SAMPLE_SHIFT;
+    }
 
     g_acr_cycles_rendered++;
     s_records_in_frame++;

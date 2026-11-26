@@ -284,6 +284,10 @@ extern volatile uint32_t g_poll_calls;
  * records out of the ring, the search for the phase lookahead records,
  * and the renderer call. */
 extern volatile uint32_t g_ace_ring_cpu_cycles;
+/* The cycle counter read is slow (dev23 lost so much renderer speed to it
+ * that TURBO programs stopped). Only one record in 64 is measured and its
+ * time is counted 64 times. */
+#define ACE_SAMPLE_SHIFT 6U
 extern volatile uint32_t g_ace_look_cpu_cycles;
 extern volatile uint32_t g_ace_render_cpu_cycles;
 extern volatile uint32_t g_oversized_drains;

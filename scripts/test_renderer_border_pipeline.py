@@ -42,6 +42,8 @@ volatile uint32_t g_compositor_last_apple_slot, g_compositor_last_apple_mode;
 uint32_t apple_fb_reader_display_mode(void) { return s_pub_mode; }
 uint32_t apple_fb_reader_format_detail(void) { return s_pub_detail; }
 uint8_t apple_fb_reader_border_color(void) { return s_pub_border; }
+/* No override picture in this test: the compositor reads the Apple slot. */
+const uint32_t *apple_fb_reader_override_frame(void) { return 0; }
 static void draw_format_badge(uint16_t *fb, int x, int y, int w) {
     (void)fb; (void)x; (void)y; (void)w;
 }

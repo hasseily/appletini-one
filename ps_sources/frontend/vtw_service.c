@@ -1473,6 +1473,15 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(7)),
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(8)));
     uart_puts(uart_base, line);
+    /* Record stream to the renderer (registers 0x27 to 0x2A): a gap is a
+     * lost record batch, after which the renderer discards a frame. */
+    snprintf(line, sizeof(line),
+             "vtw: ring recs=%lu gaps=%lu bursts=%lu fullclk=%lu\r\n",
+             (unsigned long)REG_READ(CARD_CTRL_REG_ADDR(0x27U)),
+             (unsigned long)REG_READ(CARD_CTRL_REG_ADDR(0x28U)),
+             (unsigned long)REG_READ(CARD_CTRL_REG_ADDR(0x29U)),
+             (unsigned long)REG_READ(CARD_CTRL_REG_ADDR(0x2AU)));
+    uart_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: qfill=%lu qhw=%lu qdrop=%lu sessions=%lu\r\n",
              (unsigned long)(post & 0x3FFU),

@@ -46,6 +46,7 @@ static uint8_t s_video_color_mode = APPLE_VIDEO_COLOR_COMPOSITE_MONITOR;
 /* Monochrome pixels with the tint applied, for the selected mono colour. */
 static uint32_t s_mono_tint_table[ATN_NUM_SEQUENCES];
 static uint8_t s_mono_tint_valid = 0U;
+static uint8_t s_mono_tint_color = 0U;   /* the colour the table is for */
 
 static inline uint32_t atn_pack_bgra(atn_bgra_t v);
 static inline atn_bgra_t atn_tint_mono(atn_bgra_t v);
@@ -307,15 +308,17 @@ void appletini_ntsc_set_video_output(uint8_t mono_enable,
     /* The tint of a monochrome pixel depends only on the 12 signal bits.
      * Calculate it here, once for each change of the colour, and not for
      * each dot on the capture thread. */
+    /* atn_tint_mono reads s_video_mono_color: set it before the build. */
+    s_video_mono_color = color;
     if (s_video_mono_enable != 0U &&
-        (s_mono_tint_valid == 0U || color != s_video_mono_color)) {
+        (s_mono_tint_valid == 0U || color != s_mono_tint_color)) {
         for (unsigned s = 0U; s < ATN_NUM_SEQUENCES; ++s) {
             s_mono_tint_table[s] =
                 atn_pack_bgra(atn_tint_mono(g_aBnWMonitor[s]));
         }
+        s_mono_tint_color = color;
         s_mono_tint_valid = 1U;
     }
-    s_video_mono_color = color;
 }
 
 void appletini_ntsc_set_framebuffer(uint32_t *fb) {

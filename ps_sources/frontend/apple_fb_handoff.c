@@ -87,6 +87,10 @@ void apple_fb_load_publish(const apple_fb_load_t *load)
     words[4] = load->resyncs;
     words[5] = load->gaps;
     words[6] = load->count;
+    words[7] = load->ring;
+    words[8] = load->look;
+    words[9] = load->render;
+    words[10] = load->polls;
 }
 
 void apple_fb_load_get(apple_fb_load_t *load)
@@ -100,6 +104,10 @@ void apple_fb_load_get(apple_fb_load_t *load)
     load->resyncs  = words[4];
     load->gaps     = words[5];
     load->count    = words[6];
+    load->ring     = words[7];
+    load->look     = words[8];
+    load->render   = words[9];
+    load->polls    = words[10];
 }
 
 void apple_fb_health_publish(const apple_fb_health_t *health)

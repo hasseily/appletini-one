@@ -429,7 +429,8 @@ module tb_vtw_copy_engine;
         verify_memory();
         sticky();
 
-        // An abort request from the ARM still stops the write of its clock.
+        // An abort request from the ARM acts one clock late: the write of
+        // its clock completes and is counted.
         label = "abort in a shadow write clock";
         fixture();
         launch('h1000, 'h11000, 40, 1'b0);
@@ -438,7 +439,8 @@ module tb_vtw_copy_engine;
         tick();
         abort_req = 1'b0;
         wait_done();
-        check(aborted && completed == 0 && sh_writes == 0, "abort allowed shadow write");
+        check(aborted && completed == 4 && sh_writes == 1,
+              "abort did not stop after the one write in progress");
         verify_memory();
         sticky();
 

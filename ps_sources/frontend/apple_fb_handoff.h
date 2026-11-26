@@ -145,6 +145,10 @@ typedef struct {
     uint32_t resyncs;    /* frames dropped after a gap */
     uint32_t gaps;       /* gap markers */
     uint32_t count;      /* number of intervals published */
+    uint32_t ring;       /* in the copy of records out of the ring */
+    uint32_t look;       /* in the search for the lookahead records */
+    uint32_t render;     /* in the renderer call (it includes pixel) */
+    uint32_t polls;      /* poll calls */
 } apple_fb_load_t;
 void apple_fb_load_publish(const apple_fb_load_t *load);
 void apple_fb_load_get(apple_fb_load_t *load);

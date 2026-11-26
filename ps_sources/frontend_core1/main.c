@@ -391,6 +391,10 @@ int main(void)
     uint32_t load_resyncs0 = g_acr_resyncs_cleared;
     uint32_t load_gaps0 = g_gap_markers_seen;
     uint32_t load_count = 0U;
+    uint32_t load_ring0 = g_ace_ring_cpu_cycles;
+    uint32_t load_look0 = g_ace_look_cpu_cycles;
+    uint32_t load_render0 = g_ace_render_cpu_cycles;
+    uint32_t load_polls0 = g_poll_calls;
     for (;;) {
         const uint32_t apple_status = apple_reset_status_read();
         const uint8_t reset_seq =
@@ -418,7 +422,11 @@ int main(void)
                     g_records_processed - load_records0,
                     g_acr_resyncs_cleared - load_resyncs0,
                     g_gap_markers_seen - load_gaps0,
-                    ++load_count
+                    ++load_count,
+                    g_ace_ring_cpu_cycles - load_ring0,
+                    g_ace_look_cpu_cycles - load_look0,
+                    g_ace_render_cpu_cycles - load_render0,
+                    g_poll_calls - load_polls0
                 };
                 apple_fb_load_publish(&load);
                 load_start = now;
@@ -427,6 +435,10 @@ int main(void)
                 load_records0 = g_records_processed;
                 load_resyncs0 = g_acr_resyncs_cleared;
                 load_gaps0 = g_gap_markers_seen;
+                load_ring0 = g_ace_ring_cpu_cycles;
+                load_look0 = g_ace_look_cpu_cycles;
+                load_render0 = g_ace_render_cpu_cycles;
+                load_polls0 = g_poll_calls;
             }
         }
 

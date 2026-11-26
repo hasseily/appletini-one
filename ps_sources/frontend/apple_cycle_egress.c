@@ -35,6 +35,22 @@ volatile uint32_t g_video_shadow_generation = 1U;
 volatile uint32_t g_legacy_video_shadow_generation = 1U;
 volatile uint32_t g_frame_records_seen = 0U;
 volatile uint32_t g_poll_calls         = 0U;
+volatile uint32_t g_ace_ring_cpu_cycles   = 0U;
+volatile uint32_t g_ace_look_cpu_cycles   = 0U;
+volatile uint32_t g_ace_render_cpu_cycles = 0U;
+
+/* PMU cycle counter. CPU1 starts it in its main(). In a host build this
+ * gives zero. */
+static inline uint32_t ace_cpu_cycles(void)
+{
+#if defined(__arm__)
+    uint32_t v;
+    __asm__ volatile ("mrc p15, 0, %0, c9, c13, 0" : "=r"(v));
+    return v;
+#else
+    return 0U;
+#endif
+}
 volatile uint32_t g_oversized_drains   = 0U;
 
 /* --- Internal state ------------------------------------------------- */
@@ -236,6 +252,7 @@ void apple_cycle_egress_poll(void)
             break;
         }
 
+        const uint32_t ring_start = ace_cpu_cycles();
         while (batch_scan != producer &&
                batch_count < ACE_LOOKAHEAD_BATCH_RECORDS) {
             s_lookahead_batch[batch_count++] = ACE_RING_SLOT(batch_scan);
@@ -244,6 +261,7 @@ void apple_cycle_egress_poll(void)
                 s_checkpoint();
             }
         }
+        g_ace_ring_cpu_cycles += ace_cpu_cycles() - ring_start;
         batch_reaches_producer = batch_scan == producer;
 
         for (uint32_t i = 0u; i < batch_count && budget != 0u; ++i) {
@@ -255,8 +273,10 @@ void apple_cycle_egress_poll(void)
             if (apple_cycle_renderer_needs_phase_lookahead &&
                 apple_cycle_renderer_on_record_lookahead &&
                 apple_cycle_renderer_needs_phase_lookahead(rec)) {
+                const uint32_t look_start = ace_cpu_cycles();
                 lookahead_ready = egress_find_phase_lookahead(
                     s_lookahead_batch, batch_count, i, &next1, &next2);
+                g_ace_look_cpu_cycles += ace_cpu_cycles() - look_start;
             }
             if (!lookahead_ready) {
                 /* Normally only the final two frame records reach here. If
@@ -337,10 +357,14 @@ void apple_cycle_egress_poll(void)
 
             /* Apply only this record's shadow write before dispatch. Future
              * cached records contribute switch bits, never pixels. */
-            if (apple_cycle_renderer_on_record_lookahead) {
-                apple_cycle_renderer_on_record_lookahead(rec, next1, next2);
-            } else if (apple_cycle_renderer_on_record) {
-                apple_cycle_renderer_on_record(rec);
+            {
+                const uint32_t render_start = ace_cpu_cycles();
+                if (apple_cycle_renderer_on_record_lookahead) {
+                    apple_cycle_renderer_on_record_lookahead(rec, next1, next2);
+                } else if (apple_cycle_renderer_on_record) {
+                    apple_cycle_renderer_on_record(rec);
+                }
+                g_ace_render_cpu_cycles += ace_cpu_cycles() - render_start;
             }
 
             g_records_processed++;

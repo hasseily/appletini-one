@@ -1490,6 +1490,14 @@ void vtw_service_uart_status(uint32_t uart_base)
                      (unsigned long)load.resyncs,
                      (unsigned long)load.count);
             uart_puts(uart_base, line);
+            snprintf(line, sizeof(line),
+                     "vtw: cpu1 ring=%lu%% look=%lu%% render=%lu%% polls/s=%lu\r\n",
+                     (unsigned long)(((uint64_t)load.ring * 100U) / load.interval),
+                     (unsigned long)(((uint64_t)load.look * 100U) / load.interval),
+                     (unsigned long)(((uint64_t)load.render * 100U) / load.interval),
+                     (unsigned long)(((uint64_t)load.polls * 666666667ULL) /
+                                     load.interval));
+            uart_puts(uart_base, line);
         }
     }
     /* Record stream to the renderer (registers 0x27 to 0x2A): a gap is a

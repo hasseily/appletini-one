@@ -48,10 +48,13 @@ module vtw_copy_engine (
      * flags are not in the path to the RAM write enables. The state, the
      * byte count and the writes all use this same registered value, so the
      * count is always the number of bytes written. After a permit loss one
-     * more access can complete (4 shadow bytes, or one PSRAM line). An
-     * abort request from the ARM still acts in the same clock. */
-    logic permit_q;
-    wire cancelled = cancel_q || abort_req || !permit_q;
+     * more access can complete (4 shadow bytes, or one PSRAM line).
+     * An abort request of the ARM gets the same register for the same
+     * reason: the AXI write decode is then not in the path to the RAM
+     * write enables. Only an abort in a running copy is kept, so a late
+     * abort cannot stop the next copy. */
+    logic permit_q, abort_q;
+    wire cancelled = cancel_q || abort_q || !permit_q;
     wire source_shadow = src_q < 24'h020000;
     wire dest_shadow = dst_q < 24'h020000;
 
@@ -92,8 +95,10 @@ module vtw_copy_engine (
             cancel_q <= 1'b0;
             op_q <= LOAD_SOURCE;
             permit_q <= 1'b0;
+            abort_q <= 1'b0;
         end else begin
             permit_q <= permit;
+            abort_q <= abort_req && (state_q != IDLE);
             if (state_q == IDLE) begin
                 if (start) begin
                     src_q <= source;

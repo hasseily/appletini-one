@@ -280,6 +280,12 @@ extern volatile uint32_t g_gap_markers_seen;
 extern volatile uint32_t g_bus_writes_seen;
 extern volatile uint32_t g_frame_records_seen;
 extern volatile uint32_t g_poll_calls;
+/* CPU cycles (PMU cycle counter) in three parts of the poll: the copy of
+ * records out of the ring, the search for the phase lookahead records,
+ * and the renderer call. */
+extern volatile uint32_t g_ace_ring_cpu_cycles;
+extern volatile uint32_t g_ace_look_cpu_cycles;
+extern volatile uint32_t g_ace_render_cpu_cycles;
 extern volatile uint32_t g_oversized_drains;
 
 #endif /* APPLE_CYCLE_EGRESS_H */

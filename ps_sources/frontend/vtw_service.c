@@ -11,6 +11,7 @@
 #include "boot_menu_service.h"
 #include "apple_fb_handoff.h"
 #include "disk2_service.h"
+#include "smartport_service.h"
 #include "../lib/common.h"
 #include "../lib/uart.h"
 
@@ -1321,6 +1322,18 @@ void vtw_service_uart_perf(uint32_t uart_base)
     }
 }
 
+/* The status text takes about 20 ms on the UART. A TURBO program that
+ * waits for a SmartPort reply with a counted loop (Doom: 64 K turns, less
+ * than 10 ms at TURBO) took that for "no reply" and stopped. Serve the
+ * SmartPort after each line. */
+static void vtw_status_puts(uint32_t uart_base, const char *text)
+{
+    uart_puts(uart_base, text);
+    if (smartport_service_has_pending() != 0U) {
+        smartport_service_poll();
+    }
+}
+
 void vtw_service_uart_status(uint32_t uart_base)
 {
     char line[96];
@@ -1347,7 +1360,7 @@ void vtw_service_uart_status(uint32_t uart_base)
              (g_state == VTW_ST_IDLE ? "off" : "host"),
              g_intent_enabled != 0U ? "on" : "off",
              boot_menu_service_machine_name());
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: trace=%s reason=%s faults addr=%lu selfdata=%lu dmahigh=%lu\r\n",
              (trace & CARD_CTRL_VTW_TRACE_FROZEN_BIT) ? "frozen" : "armed",
@@ -1356,7 +1369,7 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)(faults >> 16),
              (unsigned long)((faults >> 8) & 0xFFU),
              (unsigned long)(faults & 0xFFU));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: reset seen=%lu source=%s%s rstn=$%lX\r\n",
              (unsigned long)((resetf &
@@ -1370,7 +1383,7 @@ void vtw_service_uart_status(uint32_t uart_base)
                         ? "" : "none"),
              (unsigned long)(resetf &
                  CARD_CTRL_RESET_FORENSICS_RSTN_MASK));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
 
     if ((trace & CARD_CTRL_VTW_TRACE_FROZEN_BIT) != 0U) {
         for (uint32_t row = 0U; row < 2U; ++row) {
@@ -1384,8 +1397,8 @@ void vtw_service_uart_status(uint32_t uart_base)
                                 (unsigned long)(r & 0xFFFFU),
                                 (unsigned long)(r >> 16));
             }
-            uart_puts(uart_base, line);
-            uart_puts(uart_base, row == 1U ? " (new->old)\r\n" : "\r\n");
+            vtw_status_puts(uart_base, line);
+            vtw_status_puts(uart_base, row == 1U ? " (new->old)\r\n" : "\r\n");
         }
 
         for (uint32_t row = 0U; row < 4U; ++row) {
@@ -1404,8 +1417,8 @@ void vtw_service_uart_status(uint32_t uart_base)
                                 (e & 0x10000000UL) ? 'A' : '-',
                                 (e & 0x08000000UL) ? 'V' : '-');
             }
-            uart_puts(uart_base, line);
-            uart_puts(uart_base, row == 3U ? " (new->old)\r\n" : "\r\n");
+            vtw_status_puts(uart_base, line);
+            vtw_status_puts(uart_base, row == 3U ? " (new->old)\r\n" : "\r\n");
         }
     }
 
@@ -1415,8 +1428,8 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned)g_slowdown_cycles,
              (g_slowdown_mask == 0U || g_slowdown_cycles == 0U)
                  ? " [inactive]" : "");
-    uart_puts(uart_base, line);
-    uart_puts(uart_base, g_disable_fuse != 0U ? "vtw: fuse=off\r\n"
+    vtw_status_puts(uart_base, line);
+    vtw_status_puts(uart_base, g_disable_fuse != 0U ? "vtw: fuse=off\r\n"
                                               : "vtw: fuse=on\r\n");
     snprintf(line, sizeof(line),
              "vtw: speed=%s%s div=%u c074=%lu ignore=%u d2accel=%s owned=%lu run=%lu pc=%04lX\r\n",
@@ -1429,51 +1442,51 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)((st & CARD_CTRL_VTW_STATUS_BUS_OWNED) ? 1U : 0U),
              (unsigned long)((st & CARD_CTRL_VTW_STATUS_CORE_RUN) ? 1U : 0U),
              (unsigned long)(st >> CARD_CTRL_VTW_STATUS_PC_SHIFT));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: core=%lu bus=%lu posted=%lu invalid=%lu\r\n",
              (unsigned long)REG_READ(CARD_CTRL_VTW_CNT_CORE_REG),
              (unsigned long)REG_READ(CARD_CTRL_VTW_CNT_BUS_REG),
              (unsigned long)REG_READ(CARD_CTRL_VTW_CNT_POSTED_REG),
              (unsigned long)REG_READ(CARD_CTRL_VTW_CNT_INVALID_REG));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: perf fabric=%lu steps=%lu classic=%lu\r\n",
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(0)),
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(1)),
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(2)));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: cache hits=%lu pf=%lu misses=%lu invalidations=%lu\r\n",
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(3)),
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PREFETCH_REG),
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(4)),
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(5)));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: wait disk=%lu video=%lu\r\n",
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(6)),
              (unsigned long)REG_READ(CARD_CTRL_TURBO_PERF_REG(7)));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     /* Diagnostic counters of the video path; clocks are 7.5 ns each. */
     snprintf(line, sizeof(line),
              "vtw: diag drains=%lu drainclk=%lu qfullclk=%lu\r\n",
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(0)),
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(1)),
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(2)));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: diag holds=%lu holdclk=%lu\r\n",
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(3)),
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(4)));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: diag qwaits=%lu qmaxclk=%lu drainmaxclk=%lu records=%lu\r\n",
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(5)),
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(6)),
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(7)),
              (unsigned long)REG_READ(CARD_CTRL_VIDEO_DIAG_REG(8)));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     {
         /* Load of the renderer core in its last interval of about 1 s. */
         apple_fb_load_t load;
@@ -1489,7 +1502,7 @@ void vtw_service_uart_status(uint32_t uart_base)
                      (unsigned long)load.gaps,
                      (unsigned long)load.resyncs,
                      (unsigned long)load.count);
-            uart_puts(uart_base, line);
+            vtw_status_puts(uart_base, line);
             snprintf(line, sizeof(line),
                      "vtw: cpu1 ring=%lu%% look=%lu%% render=%lu%% polls/s=%lu\r\n",
                      (unsigned long)(((uint64_t)load.ring * 100U) / load.interval),
@@ -1497,7 +1510,7 @@ void vtw_service_uart_status(uint32_t uart_base)
                      (unsigned long)(((uint64_t)load.render * 100U) / load.interval),
                      (unsigned long)(((uint64_t)load.polls * 666666667ULL) /
                                      load.interval));
-            uart_puts(uart_base, line);
+            vtw_status_puts(uart_base, line);
         }
     }
     /* Record stream to the renderer (registers 0x27 to 0x2A): a gap is a
@@ -1508,21 +1521,21 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)REG_READ(CARD_CTRL_REG_ADDR(0x28U)),
              (unsigned long)REG_READ(CARD_CTRL_REG_ADDR(0x29U)),
              (unsigned long)REG_READ(CARD_CTRL_REG_ADDR(0x2AU)));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: qfill=%lu qhw=%lu qdrop=%lu sessions=%lu\r\n",
              (unsigned long)(post & 0x3FFU),
              (unsigned long)((post >> 16) & 0x3FFU),
              (unsigned long)(post >> 26),
              (unsigned long)g_sessions_started);
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: wrchk mismatch=%lu last $%04lX expected=$%02lX observed=$%02lX\r\n",
              (unsigned long)(wr_check >> 16),
              (unsigned long)(wr_addr & 0xFFFFU),
              (unsigned long)((wr_check >> 8) & 0xFFU),
              (unsigned long)(wr_check & 0xFFU));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
     snprintf(line, sizeof(line),
              "vtw: c000 reads=%lu bit7=%lu last=$%02lX prev=%s $%04lX %c drive=%lu\r\n",
              (unsigned long)(c000_cnt & 0xFFFFU),
@@ -1532,7 +1545,7 @@ void vtw_service_uart_status(uint32_t uart_base)
              (unsigned long)(c000_ctx >> 16),
              ((c000_ctx & (1UL << 13)) != 0U) ? 'R' : 'W',
              (unsigned long)((c000_ctx >> 12) & 1U));
-    uart_puts(uart_base, line);
+    vtw_status_puts(uart_base, line);
 
     {
         uint32_t vsss = (st >> CARD_CTRL_VTW_STATUS_VSSS_SHIFT) &
@@ -1553,7 +1566,7 @@ void vtw_service_uart_status(uint32_t uart_base)
                  (unsigned long)((vsss >> 2) & 1U),
                  (unsigned long)((vsss >> 1) & 1U),
                  (unsigned long)(vsss & 1U));
-        uart_puts(uart_base, line);
+        vtw_status_puts(uart_base, line);
         {
             int pos = snprintf(line, sizeof(line), "vtw: sw trail");
             for (uint32_t n = 0U; n < 4U; ++n) {
@@ -1567,8 +1580,8 @@ void vtw_service_uart_status(uint32_t uart_base)
                                     (unsigned long)(e & 0xFFU));
                 }
             }
-            uart_puts(uart_base, line);
-            uart_puts(uart_base, " (new->old)\r\n");
+            vtw_status_puts(uart_base, line);
+            vtw_status_puts(uart_base, " (new->old)\r\n");
         }
         {
             uint32_t r0 = REG_READ(CARD_CTRL_VTW_CXXX_RING_REG(0));
@@ -1587,7 +1600,7 @@ void vtw_service_uart_status(uint32_t uart_base)
                      (unsigned long)(r2 >> 16),
                      (unsigned long)(r3 & 0xFFFFU),
                      (unsigned long)(r3 >> 16));
-            uart_puts(uart_base, line);
+            vtw_status_puts(uart_base, line);
         }
         snprintf(line, sizeof(line),
                  "vtw: last bus %s $%04lX = $%02lX, irqs seen=%lu%s\r\n",
@@ -1600,7 +1613,7 @@ void vtw_service_uart_status(uint32_t uart_base)
                  (((last >> CARD_CTRL_VTW_LAST_SYNC_IRQ_SHIFT)
                    & CARD_CTRL_VTW_LAST_SYNC_IRQ_MASK) ==
                   CARD_CTRL_VTW_LAST_SYNC_IRQ_MASK) ? " (sat)" : "");
-        uart_puts(uart_base, line);
+        vtw_status_puts(uart_base, line);
     }
 }
 

@@ -92,7 +92,7 @@
 #define VTW_SLOW_SLOT_BIT(s)      (1U << ((s) - 1U))   /* s = 1..7 */
 /* Duration presets the menu cycles through (Apple cycles). */
 static const uint16_t k_vtw_slowdown_cycle_presets[] = {
-    32U, 64U, 128U, 256U, 512U, 1024U, 2048U, 4096U,
+    0U, 8U, 16U, 32U, 64U, 128U, 256U, 512U, 1024U, 2048U, 4096U,
     8192U, 16384U, 32768U, 65535U
 };
 #define CONFIG_DEFAULT_DISK2_ACTIVITY_VISIBLE 0U
@@ -5449,10 +5449,9 @@ static void config_menu_apply_vtw_slowdown(config_menu_t *menu, uint8_t save)
     const uint16_t phasor_mask =
         (config_menu_phasor_slot_enabled(menu, 2U) ? VTW_SLOW_SLOT_BIT(2U) : 0U) |
         (config_menu_phasor_slot_enabled(menu, 4U) ? VTW_SLOW_SLOT_BIT(4U) : 0U);
+    /* A window of 0 is the order of the user for no slowdown at all, so
+     * it also applies to the slot of the Mockingboard or Phasor. */
     eff_mask |= phasor_mask;
-    if (phasor_mask != 0U && eff_cycles == 0U) {
-        eff_cycles = CONFIG_DEFAULT_VTW_SLOWDOWN_CYCLES;
-    }
     if (menu->platform.set_vtw_slowdown != NULL) {
         menu->platform.set_vtw_slowdown(menu->platform.ctx,
                                         eff_mask, eff_cycles);

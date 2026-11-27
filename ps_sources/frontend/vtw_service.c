@@ -1257,11 +1257,11 @@ void vtw_service_poll(void)
  * prints the figures for the time between the two and takes a new sample. */
 void vtw_service_uart_perf(uint32_t uart_base)
 {
-    static uint32_t prev[9];
+    static uint32_t prev[13];
     static XTime prev_time;
     static uint8_t have_prev;
-    uint32_t now[9];
-    uint32_t d[9];
+    uint32_t now[13];
+    uint32_t d[13];
     XTime t;
     uint64_t ms;
     char line[96];
@@ -1270,10 +1270,13 @@ void vtw_service_uart_perf(uint32_t uart_base)
         now[n] = REG_READ(CARD_CTRL_TURBO_PERF_REG(n));
     }
     now[8] = REG_READ(CARD_CTRL_TURBO_PREFETCH_REG);
+    for (uint32_t n = 0U; n < 4U; ++n) {
+        now[9U + n] = REG_READ(CARD_CTRL_TURBO_BUS_PERF_REG(n));
+    }
     XTime_GetTime(&t);
     ms = (have_prev != 0U)
         ? (uint64_t)(t - prev_time) / (COUNTS_PER_SECOND / 1000U) : 0U;
-    for (uint32_t n = 0U; n < 9U; ++n) {
+    for (uint32_t n = 0U; n < 13U; ++n) {
         d[n] = now[n] - prev[n];          /* right through one wrap */
         prev[n] = now[n];
     }
@@ -1286,7 +1289,10 @@ void vtw_service_uart_perf(uint32_t uart_base)
         return;
     }
     /* d: 0 fabric clocks, 1 steps, 2 classic cycles, 3 cache completions
-     * (with prefetch), 4 misses, 6 disk wait, 7 video wait, 8 prefetch. */
+     * (with prefetch), 4 misses, 6 disk wait, 7 video wait, 8 prefetch,
+     * 9 clocks in a bus step, 10 bus steps, 11 clocks in a slowdown window,
+     * 12 bus steps in $C0xx. A bus step in a slowdown window is in both
+     * time figures. */
     if (d[0] == 0U || d[1] == 0U) {
         uart_puts(uart_base, "vtw perf: the core did not run\r\n");
         return;
@@ -1318,6 +1324,16 @@ void vtw_service_uart_perf(uint32_t uart_base)
                  (unsigned long)(((uint64_t)d[6] * 100U) / d[0]),
                  (unsigned long)(d[2] / d[1]),
                  (unsigned long)((((uint64_t)d[2] * 100U) / d[1]) % 100U));
+        uart_puts(uart_base, line);
+        snprintf(line, sizeof(line),
+                 "vtw perf: bus: time %lu%%, steps %lu (%lu in $C0xx), %lu clocks per step\r\n",
+                 (unsigned long)(((uint64_t)d[9] * 100U) / d[0]),
+                 (unsigned long)d[10], (unsigned long)d[12],
+                 (unsigned long)((d[10] != 0U) ? (d[9] / d[10]) : 0U));
+        uart_puts(uart_base, line);
+        snprintf(line, sizeof(line),
+                 "vtw perf: slowdown window: time %lu%%\r\n",
+                 (unsigned long)(((uint64_t)d[11] * 100U) / d[0]));
         uart_puts(uart_base, line);
     }
 }

@@ -328,6 +328,9 @@
 #define CARD_CTRL_TURBO_PERF_REG(n)             CARD_CTRL_REG_ADDR(0xA3U + (n))
 /* Read completions that used the prefetched byte (one fabric clock). */
 #define CARD_CTRL_TURBO_PREFETCH_REG            CARD_CTRL_REG_ADDR(0xB8U)
+/* n = 0: clocks in a bus step, 1: bus steps, 2: clocks in a slowdown
+ * window, 3: bus steps in $C0xx. */
+#define CARD_CTRL_TURBO_BUS_PERF_REG(n)         CARD_CTRL_REG_ADDR(0xC2U + (n))
 /* Diagnostic counters, 32 bits each: 0 full video drains, 1 clocks in a
  * drain, 2 clocks the CPU waited for the record queue, 3 ARM holds,
  * 4 clocks in an ARM hold, 5 number of waits for the record queue,

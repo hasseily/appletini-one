@@ -169,6 +169,20 @@ namespace eval appletini_dir_twins {
             error "No direction-source twin was made."
         }
         puts "Direction-source twins made: [llength $made]"
+
+        # Keep the twins in the area of the direction gates. A twin has no
+        # load outside the direction logic, but its D net pulls it to its
+        # original. In runs that failed, the twins were at rows 39 to 43,
+        # 10 to 20 rows from the gates; in runs that passed, at row 34 or
+        # below. The area is not exclusive, so other logic can use it.
+        set twins {}
+        foreach item $made {
+            lappend twins [lindex $item 1]
+        }
+        set area [create_pblock pblock_dir_twins]
+        resize_pblock $area -add {SLICE_X98Y20:SLICE_X113Y36}
+        add_cells_to_pblock $area $twins
+        puts "Direction-source twins in pblock_dir_twins: [llength $twins]"
     }
 }
 appletini_dir_twins::run

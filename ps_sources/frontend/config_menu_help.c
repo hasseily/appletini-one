@@ -614,14 +614,15 @@ HELP(transwarp_slowdown_slots,
     "peripherals that expect the Apple bus to run at 1 MHz.",
     "Per-slot slowdown mirrors the real TransWarp's DIP block 2: after the core touches an enabled",
     "timing-sensitive region, it drops to 1 MHz for the slowdown window, then resumes full speed.",
-    "The slot with the virtual Phasor slows to 1 MHz.");
+    "The slot with the virtual Phasor slows to 1 MHz, unless the slowdown window is 0.");
 
 HELP(transwarp_slowdown_window,
     "Controls the duration of the slowdown window for all slowdown regions.",
     "The window is how long (in cycles) each touch stays at 1 MHz. As a rule, the faster the acceleration,",
     "the longer the window, but it depends on the software; pick 16k, 32k, or the maximum 65535 cycles when",
     "a very fast core needs to stay locked through longer stretches, like a beam-synced effect",
-    "or a long device loop. Pick the shortest window that works for your software.");
+    "or a long device loop. Pick the shortest window that works for your software.",
+    "A window of 0 disables the slowdown for all regions, also for the slot of the virtual Phasor.");
 
 static const help_override_t transwarp_overrides[] = {
     OVERRIDE(CONFIG_TRANSWARP_ITEM_SPEED, transwarp_speed),

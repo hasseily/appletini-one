@@ -794,8 +794,10 @@ void config_menu_draw_transwarp(uint16_t *fb,
         }
     }
     {
-        char win_val[16];
-        (void)snprintf(win_val, sizeof(win_val), "%u cyc",
+        char win_val[24];
+        (void)snprintf(win_val, sizeof(win_val),
+                       (menu->vtw_slowdown_cycles == 0U)
+                           ? "%u cyc (disabled)" : "%u cyc",
                        (unsigned)menu->vtw_slowdown_cycles);
         hgr_draw_value_item(fb, x, y + (7 * row_h), w,
                             (uint8_t)(menu->item_focus ==

@@ -314,7 +314,7 @@ module vtw_core_top (
     output logic [16*32-1:0]        dbg_io_trace,
     output logic [31:0]             dbg_trace_status,
     output logic [31:0]             dbg_bus_faults,
-    output logic [287:0]            turbo_perf,
+    output logic [415:0]            turbo_perf,
     // Diagnostic counters of the video path and the ARM hold:
     // [31:0] full video drains, [63:32] clocks in a drain, [95:64] clocks
     // the CPU waited because the record queue to the ARM was full,
@@ -1819,16 +1819,24 @@ module vtw_core_top (
     // The tick count comes from d2_cycle_ticks, which is the same value
     // in the same clock. A second register of core_cycle_ticks was a
     // second set of endpoints on the path from the opcode decode.
-    logic [8:0] perf_events_q;
+    // Counters 9 to 12 show the cost of the real bus: clocks in a bus
+    // step, bus steps, clocks in a slowdown window, bus steps in $C0xx.
+    logic [12:0] perf_events_q;
     logic perf_invalidate_q;
-    logic [31:0] perf_count [0:8];
+    logic [31:0] perf_count [0:12];
     always_ff @(posedge clk) begin
         if (!rstn || dbg_clear) begin
             perf_events_q <= '0;
             perf_invalidate_q <= 1'b0;
-            for (int n = 0; n < 9; n++) perf_count[n] <= '0;
+            for (int n = 0; n < 13; n++) perf_count[n] <= '0;
         end else begin
             perf_events_q <= {
+                core_en && (xstate_q == X_BUS_DONE) &&
+                    (cycle_addr_q[15:8] == 8'hC0),
+                core_active && slow_active,
+                core_en && (xstate_q == X_BUS_DONE),
+                core_active && ((xstate_q == X_BUS) ||
+                                (xstate_q == X_BUS_DONE)),
                 pf_accept,
                 core_active && ((xstate_q == X_POST_STALL) ||
                     (xstate_q == X_VIDEO_WAIT) ||
@@ -1843,14 +1851,14 @@ module vtw_core_top (
                 core_active
             };
             perf_invalidate_q <= turbo_invalidate;
-            for (int n = 0; n < 9; n++) begin
+            for (int n = 0; n < 13; n++) begin
                 if (perf_events_q[n])
                     perf_count[n] <= perf_count[n] +
                         ((n == 2) ? {28'b0, d2_cycle_ticks} : 32'd1);
             end
         end
     end
-    for (genvar n = 0; n < 9; n++) begin : perf_readback
+    for (genvar n = 0; n < 13; n++) begin : perf_readback
         assign turbo_perf[32*n +: 32] = perf_count[n];
     end
 

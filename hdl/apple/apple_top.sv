@@ -585,6 +585,10 @@ module apple_top(
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF6 = 8'hA9;
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF7 = 8'hAA;
     localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF8 = 8'hB8;  // prefetched completions
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF9  = 8'hC2;  // clocks in a bus step
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF10 = 8'hC3;  // bus steps
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF11 = 8'hC4;  // clocks in a slowdown window
+    localparam logic [7:0] CARD_CTRL_REG_TURBO_PERF12 = 8'hC5;  // bus steps in $C0xx
     localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG0 = 8'hB9;  // full video drains
     localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG1 = 8'hBA;  // clocks in a drain
     localparam logic [7:0] CARD_CTRL_REG_VIDEO_DIAG2 = 8'hBB;  // clocks with the record queue full
@@ -2246,7 +2250,7 @@ module apple_top(
     logic [31:0] vtw_sh_rdata32;
     logic        vtw_sh_word_we;
     logic [31:0] vtw_sh_wdata32;
-    logic [287:0] vtw_turbo_perf;
+    logic [415:0] vtw_turbo_perf;
     logic [287:0] vtw_video_diag;
     logic [7:0]  vtw_sh_rdata_q;
     logic        vtw_sh_port_en;
@@ -3455,6 +3459,10 @@ module apple_top(
                 CARD_CTRL_REG_TURBO_PERF6: as_client_rdata_q <= vtw_turbo_perf[223:192];
                 CARD_CTRL_REG_TURBO_PERF7: as_client_rdata_q <= vtw_turbo_perf[255:224];
                 CARD_CTRL_REG_TURBO_PERF8: as_client_rdata_q <= vtw_turbo_perf[287:256];
+                CARD_CTRL_REG_TURBO_PERF9:  as_client_rdata_q <= vtw_turbo_perf[319:288];
+                CARD_CTRL_REG_TURBO_PERF10: as_client_rdata_q <= vtw_turbo_perf[351:320];
+                CARD_CTRL_REG_TURBO_PERF11: as_client_rdata_q <= vtw_turbo_perf[383:352];
+                CARD_CTRL_REG_TURBO_PERF12: as_client_rdata_q <= vtw_turbo_perf[415:384];
                 CARD_CTRL_REG_VTW_JOYSTICK_PADDLES,
                 CARD_CTRL_REG_VTW_JOYSTICK_CONTROL:
                     as_client_rdata_q <= vtw_joystick_ps_rdata;

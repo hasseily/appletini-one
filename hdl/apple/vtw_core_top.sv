@@ -1255,7 +1255,7 @@ module vtw_core_top (
                            !(slow_update_valid_q && slow_update_hit_q);
 
     // Bound the valid-bit mux and LUT-RAM read depth at the fabric clock.
-    localparam int TURBO_BYTE_INDEX_BITS = 7;
+    localparam int TURBO_BYTE_INDEX_BITS = 8;
     wire turbo_read_valid, turbo_write_valid, turbo_write_fast;
     wire [15-TURBO_BYTE_INDEX_BITS:0] turbo_read_tag;
     wire [7:0] turbo_write_tag;
@@ -1816,14 +1816,15 @@ module vtw_core_top (
 
     // Read-only performance counters. Register the predicates before the
     // adders so diagnostics do not lengthen the CPU completion paths.
+    // The tick count comes from d2_cycle_ticks, which is the same value
+    // in the same clock. A second register of core_cycle_ticks was a
+    // second set of endpoints on the path from the opcode decode.
     logic [8:0] perf_events_q;
-    logic [3:0] perf_ticks_q;
     logic perf_invalidate_q;
     logic [31:0] perf_count [0:8];
     always_ff @(posedge clk) begin
         if (!rstn || dbg_clear) begin
             perf_events_q <= '0;
-            perf_ticks_q <= '0;
             perf_invalidate_q <= 1'b0;
             for (int n = 0; n < 9; n++) perf_count[n] <= '0;
         end else begin
@@ -1841,12 +1842,11 @@ module vtw_core_top (
                 core_en,
                 core_active
             };
-            perf_ticks_q <= core_cycle_ticks;
             perf_invalidate_q <= turbo_invalidate;
             for (int n = 0; n < 9; n++) begin
                 if (perf_events_q[n])
                     perf_count[n] <= perf_count[n] +
-                        ((n == 2) ? {28'b0, perf_ticks_q} : 32'd1);
+                        ((n == 2) ? {28'b0, d2_cycle_ticks} : 32'd1);
             end
         end
     end

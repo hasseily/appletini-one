@@ -120,8 +120,16 @@ module linear_text_overlay_card (
     wire slot_io_hit = apple_bus_active &&
                        (ab_read.addr[15:8] == 8'hC0) &&
                        (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign}));
-    wire ab_io_read  = ab_read.serve_en && ab_read.rw && slot_io_hit;
-    wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit;
+    // Registered decode with a serve strobe one clock later, the same
+    // timing as the SmartPort ROM reads that share the output register.
+    logic slot_io_hit_q;
+    logic serve_q;
+    always_ff @(posedge clk) begin
+        slot_io_hit_q <= slot_io_hit;
+        serve_q       <= ab_read.serve_en;
+    end
+    wire ab_io_read  = serve_q && ab_read.rw && slot_io_hit_q;
+    wire ab_io_write = ab_read.data_en && !ab_read.rw && slot_io_hit_q;
     wire [3:0] io_idx = ab_read.addr[3:0];
 
     /* The parent gates both phase strobes when SmartPort does not own slot 7.

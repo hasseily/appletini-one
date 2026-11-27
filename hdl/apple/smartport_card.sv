@@ -248,13 +248,27 @@ module smartport_card (
     wire c8_rom_hit   = c8_owner && !data_reg_hit && !ctrl_reg_hit &&
                         !pop_reg_hit;
 
-    wire ab_rom_read   = sp_serve_en_q && ab_read.rw && slot_rom_hit;
-    wire ab_c8_read    = sp_serve_en_q && ab_read.rw && c8_rom_hit;
-    wire ab_data_read  = sp_serve_en_q && ab_read.rw && data_reg_hit;
-    wire ab_ctrl_read  = sp_serve_en_q && ab_read.rw && ctrl_reg_hit;
-    wire ab_data_write = ab_read.data_en && !ab_read.rw && data_reg_hit;
-    wire ab_ctrl_write = ab_read.data_en && !ab_read.rw && ctrl_reg_hit;
-    wire ab_pop_write  = ab_read.data_en && !ab_read.rw && pop_reg_hit;
+    // The decode is registered: sp_serve_en_q is one clock after the
+    // address sample, and data_en is later still. The card enable stays
+    // live, so a policy change stops the strobes in the same clock.
+    logic slot_rom_hit_q, c8_rom_hit_q;
+    logic data_reg_hit_q, ctrl_reg_hit_q, pop_reg_hit_q;
+    always_ff @(posedge clk) begin
+        slot_rom_hit_q <= slot_rom_hit;
+        c8_rom_hit_q   <= c8_rom_hit;
+        data_reg_hit_q <= data_reg_hit;
+        ctrl_reg_hit_q <= ctrl_reg_hit;
+        pop_reg_hit_q  <= pop_reg_hit;
+    end
+    wire sp_rd = sp_serve_en_q && ab_read.rw && apple_bus_enabled;
+    wire sp_wr = ab_read.data_en && !ab_read.rw && apple_bus_enabled;
+    wire ab_rom_read   = sp_rd && slot_rom_hit_q;
+    wire ab_c8_read    = sp_rd && c8_rom_hit_q;
+    wire ab_data_read  = sp_rd && data_reg_hit_q;
+    wire ab_ctrl_read  = sp_rd && ctrl_reg_hit_q;
+    wire ab_data_write = sp_wr && data_reg_hit_q;
+    wire ab_ctrl_write = sp_wr && ctrl_reg_hit_q;
+    wire ab_pop_write  = sp_wr && pop_reg_hit_q;
 
     // ---- vTW short-circuit serve ----
     // One-cycle accept; a two-cycle read serve (registered ROM/FIFO). The

@@ -135,6 +135,8 @@ module tb_uthernet2_card;
         pulse_host_read();
         wait (!eth_cs_n);
         pulse_apple_read(2'b11);
+        // The card takes the access one clock after serve_en.
+        @(negedge clk);
         if (!dut.apple_read_pending_q)
             $fatal(1, "test did not defer the Apple read");
 

@@ -197,15 +197,29 @@ module uthernet2_card #(
         (ab_read.addr[7:4] == (4'h8 + {1'b0, slot_assign})) &&
         (ab_read.addr[3:2] == 2'b01);
 
-    wire apple_io_read_start  = ab_read.serve_en && ab_read.cycle_valid &&
-                                ab_read.rw && slot_io_hit;
-    wire apple_io_write_addr_start = ab_read.serve_en && ab_read.cycle_valid &&
-                                      !ab_read.rw && slot_io_hit;
-    wire apple_io_write_start = ab_read.data_en && !ab_read.rw && slot_io_hit;
+    // The physical bus sets its address in the clock of serve_en, so a
+    // registered decode is good one clock after that strobe. The delayed
+    // strobe keeps the address compare (and, in ONE//e, the bus select mux
+    // before it) off the card's state machine. The address does not change
+    // again before data_en.
+    logic slot_io_hit_q;
+    logic serve_q;
+    always_ff @(posedge clk) begin
+        slot_io_hit_q <= slot_io_hit;
+        serve_q       <= ab_read.serve_en && ab_read.cycle_valid;
+    end
+    wire apple_io_read_start  = serve_q && ab_read.rw && slot_io_hit_q;
+    wire apple_io_write_addr_start = serve_q && !ab_read.rw && slot_io_hit_q;
+    wire apple_io_write_start = ab_read.data_en && !ab_read.rw && slot_io_hit_q;
     wire apple_cycle_ended = ab_read.addr_en || ab_read.data_en || !ab_read.res;
     wire apple_io_start = apple_io_read_start || apple_io_write_start;
     wire [1:0] apple_io_reg = ab_read.addr[1:0];
-    wire apple_waiting = apple_io_start || apple_io_write_addr_start ||
+    // The registered decode is one clock late. In the clock of serve_en
+    // itself, hold the host for every Apple cycle, so that no host command
+    // can start in the one clock before the decode is known.
+    wire apple_serve_now = ab_read.serve_en && ab_read.cycle_valid;
+    wire apple_waiting = apple_serve_now ||
+                         apple_io_start || apple_io_write_addr_start ||
                          apple_read_pending_q || apple_write_reserved_q;
     wire host_can_start =
         reset_done_q && (eth_state_q == ETH_IDLE) && !apple_waiting &&

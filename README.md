@@ -5,10 +5,10 @@ around a Xilinx Zynq-7020. The PL handles cycle-sensitive Apple bus behavior;
 the two ARM cores provide storage, video rendering, USB services, configuration,
 and higher-level peripheral emulation.
 
-The current stable firmware is [F1.3.9](docs/releases/F1.3.9.md). It adds
-the [ONEWWW web browser](README_ONEWWW.md), which the card draws in true
-colour on its HDMI output, and an FTP server for three clients with active
-mode.
+The current stable firmware is [F1.3.11](docs/releases/F1.3.11.md). It makes
+the virtual 65C02 much faster, adds a 16 MB RamWorks option and uses less
+FPGA logic. [F1.3.9](docs/releases/F1.3.9.md) added the
+[ONEWWW web browser](README_ONEWWW.md) and an FTP server for three clients.
 
 ## Virtual Hardware
 

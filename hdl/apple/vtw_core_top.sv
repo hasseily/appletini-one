@@ -1370,6 +1370,25 @@ module vtw_core_top (
     wire [15:0] pf_opcode_addr = (core_fused_bytes == 2'd2) ? pf_addr_plus2 :
                                  (core_fused_bytes == 2'd1) ? pf_addr_plus1 :
                                                               pf_lookup_addr;
+    /* Read-ahead. A read miss has the shadow word in X_MEM_CAPTURE. In
+     * that clock port A is free, so it reads the next word of the same
+     * page, and the first X_MEM_DONE clock fills it. The CPU cannot write
+     * between the two clocks, and a flush or an outside write in one of
+     * them stops the fill. The page is the same, so the translation is
+     * the same. Pages 0 and 1 have their own store and are not included. */
+    logic [5:0] ra_off_q;
+    logic       ra_ok_q, ra_fill_q;
+    wire ra_issue = (xstate_q == X_MEM_CAPTURE) && cycle_rw_q &&
+                    xl_shadow_valid && ra_ok_q && !turbo_invalidate;
+    wire [15:0] ra_addr = {cycle_addr_q[15:8], ra_off_q, 2'b00};
+    always_ff @(posedge clk) begin
+        ra_off_q <= cycle_addr_q[7:2] + 6'd1;
+        ra_ok_q  <= (turbo_mode_q == SPEED_TURBO) &&
+                    cycle_addr_q[15:12] != 4'hC &&
+                    cycle_addr_q[15:9] != 7'd0 &&
+                    cycle_addr_q[7:2] != 6'h3F;
+        ra_fill_q <= rstn && ra_issue;
+    end
     vtw_turbo_cache #(.BYTE_INDEX_BITS(TURBO_BYTE_INDEX_BITS)) turbo_cache_i (
         .clk(clk), .rstn(rstn), .invalidate(turbo_flush_all),
         .drop(turbo_ext_plain && !turbo_remap), .drop_addr(sh_addr[15:0]),
@@ -1387,7 +1406,8 @@ module vtw_core_top (
         .map_fill(turbo_map_fill), .map_addr(cycle_addr_q),
         .map_rw(cycle_rw_q), .map_phys(xl_shadow_phys),
         .map_fast_write(turbo_map_fast_write),
-        .byte_fill(turbo_byte_fill), .byte_addr(cycle_addr_q),
+        .byte_fill(turbo_byte_fill || ra_fill_q),
+        .byte_addr(ra_fill_q ? ra_addr : cycle_addr_q),
         .word_data(shadow_a_rdata32), .byte_phys(xl_shadow_phys),
         .snoop_write(shadow_a_en && shadow_a_we),
         .snoop_addr(cycle_addr_q),
@@ -1477,12 +1497,14 @@ module vtw_core_top (
     /* No shadow traffic while the core is held: port B (ARM) owns the
      * memory, and a held core's outputs must not scribble on it. */
     assign shadow_a_en   = core_shadow_issue || floating_scan_issue ||
-                          turbo_shadow_write || turbo_shadow_read;
+                          turbo_shadow_write || turbo_shadow_read ||
+                          ra_issue;
     // Address selection depends only on the captured request. Completion
     // permission gates the write enable, not the RAM address or snoop tag.
     wire turbo_write_address = (xstate_q == X_TURBO_DONE) && !cycle_rw_q;
     assign shadow_a_addr = floating_scan_issue
                          ? {2'b00, floating_scan_addr_q}
+                         : ra_issue ? {xl_shadow_phys[17:8], ra_off_q, 2'b00}
                          : turbo_write_address ? turbo_write_phys_q : xl_shadow_phys;
     assign shadow_a_we   = (core_shadow_issue && xl_is_write) || turbo_shadow_write;
 

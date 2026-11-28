@@ -939,6 +939,127 @@ module tb_vtw_turbo;
         freeze_core();
     endtask
 
+    // Watch the actual shadow port and cache fill. A lookup may speculate on
+    // an operand, but it can only install a word after an accepted opcode.
+    wire instruction_ahead_read = dut.xstate_q == dut.X_CAPTURE &&
+                                  dut.shadow_a_en && !dut.shadow_a_we;
+    wire instruction_ahead_fill = dut.turbo_cache_i.byte_fill &&
+                                  !dut.turbo_byte_fill && !dut.ra_fill_q;
+
+    task automatic load_main_code(input logic [15:0] addr, input byte code[]);
+        foreach (code[i]) sh_write({2'b00, addr} + i, code[i]);
+    endtask
+
+    task automatic instruction_ahead_stream(input bit host_write);
+        logic [17:0] target;
+        integer fills, timely_hits;
+        bit modified, cached;
+        begin_program(2'd3);
+        // The startup code stays in ROM. Execute the stream in main RAM so a
+        // host byte write drops one word while the instruction is in flight.
+        absolute(8'h4C, 16'h90E0);
+        load_main_code(16'h90E0, '{8'hA9, 8'h00});    // LDA #0
+        for (int i = 0; i < 48; i++) begin
+            load_main_code(16'h90E2 + 2*i, '{8'h49, 8'h00});  // EOR #0
+        end
+        load_main_code(16'h9142, '{8'h8D, 8'h00, 8'hA1, 8'h80, 8'hFE}); // STA $A100 / BRA *
+        start_program();
+        fills = 0;
+        timely_hits = 0;
+        modified = 0;
+        cached = 0;
+        target = 0;
+        while (marker_count[0] == 0) begin
+            @(posedge clk);
+            if (instruction_ahead_read) begin
+                check(dut.shadow_a_addr[7:0] >= 8, "instruction read-ahead crossed a page end");
+                if (host_write && !modified && dut.shadow_a_addr[17:8] == 10'h090 &&
+                    dut.core_en && dut.core_sync) begin
+                    target = dut.shadow_a_addr;
+                    @(negedge clk);
+                    sh_en = 1'b1;
+                    sh_we = 1'b1;
+                    sh_addr = target + 1;
+                    sh_wdata = 8'h5A;
+                    @(posedge clk);
+                    check(!instruction_ahead_fill, "host write accepted an old instruction fill");
+                    @(negedge clk);
+                    sh_en = 1'b0;
+                    sh_we = 1'b0;
+                    modified = 1;
+                end
+            end
+            if (cached && dut.core_en && dut.core_sync &&
+                dut.core_addr[15:2] == target[15:2] &&
+                (dut.turbo_complete || dut.pf_accept)) begin
+                timely_hits++;
+                cached = 0;
+            end
+            if (dut.turbo_shadow_read && dut.cycle_addr_q[15:2] == target[15:2])
+                cached = 0;
+            if (instruction_ahead_fill) begin
+                target = dut.turbo_cache_i.byte_phys;
+                cached = 1;
+                fills++;
+            end
+        end
+        check(!host_write || modified, "missed the host write on an instruction fill");
+        check(marker_value[0] === (host_write ? 8'h5A : 8'h00), "instruction stream used stale bytes");
+        check(fills > 1 && timely_hits > 0, "instruction stream did not use a continued fill");
+        freeze_core();
+    endtask
+
+    task automatic instruction_ahead_data_seed;
+        begin_program(2'd3);
+        // A data read fills $6004. The JMP at $F003 also consumes an
+        // operand from $F004. Neither access can continue the stream.
+        absolute(8'hAD, 16'h6000);
+        absolute(8'h4C, 16'h6004);
+        sh_write(18'h06000, 8'hC3);
+        load_main_code(16'h6004, '{8'hA9, 8'h37,             // LDA #$37
+                                  8'h8D, 8'h00, 8'hA1,      // STA $A100
+                                  8'h80, 8'hFE});           // BRA *
+        start_program();
+        while (marker_count[0] == 0) begin
+            @(posedge clk);
+            if (instruction_ahead_fill)
+                check(dut.turbo_cache_i.byte_addr != 16'h6008 &&
+                      dut.turbo_cache_i.byte_addr != 16'hF008,
+                      "a data seed or an operand continued the instruction stream");
+        end
+        check(marker_value[0] === 8'h37, "data-seeded code returned the wrong byte");
+        freeze_core();
+    endtask
+
+    task automatic instruction_ahead_cpu_write;
+        bit issued, collided;
+        begin_program(2'd3);
+        immediate(8'hA9, 8'h5A);
+        absolute(8'h8D, 16'h9020);               // Warm the write map.
+        absolute(8'h4C, 16'h9000);
+        load_main_code(16'h9000, '{8'h4C, 8'h04, 8'h90,      // JMP $9004, the word read ahead
+                                  8'hEA,                    // padding
+                                  8'h8D, 8'h09, 8'h90,      // STA $9009
+                                  8'hEA,                    // NOP
+                                  8'hA9, 8'h00,             // LDA #0 (modified to #$5A)
+                                  8'h8D, 8'h00, 8'hA1,      // STA $A100
+                                  8'h80, 8'hFE});           // BRA *
+        start_program();
+        issued = 0;
+        collided = 0;
+        while (marker_count[0] == 0) begin
+            @(posedge clk);
+            if (issued && dut.shadow_a_en && dut.shadow_a_we && dut.shadow_a_addr == 18'h09009) begin
+                collided = 1;
+                check(!instruction_ahead_fill, "CPU store lost the cache write port to a continued fill");
+            end
+            issued = instruction_ahead_read && dut.shadow_a_addr == 18'h09008;
+        end
+        check(collided, "CPU store did not coincide with the instruction fill");
+        check(marker_value[0] === 8'h5A, "self-modifying code saw an old instruction operand");
+        freeze_core();
+    endtask
+
     task automatic bank_program;
         begin_program(2'd3);
         sh_write(18'h09000, 8'h11);
@@ -1942,6 +2063,10 @@ module tb_vtw_turbo;
                  zp_cold, zp_hot);
         coherency_program();
         hold_on_read_ahead_fill();
+        instruction_ahead_stream(1'b0);
+        instruction_ahead_stream(1'b1);
+        instruction_ahead_data_seed();
+        instruction_ahead_cpu_write();
         bank_program();
         ramworks_program();
         selfmod_program();

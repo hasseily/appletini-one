@@ -55,6 +55,8 @@ module vtw_turbo_cache #(
     input  logic [15:0] byte_addr,
     input  logic [31:0] word_data,
     input  logic [17:0] byte_phys,
+    // Set written by a word fill, for the instruction read-ahead tracker.
+    output logic [BYTE_INDEX_BITS-3:0] word_fill_set,
 
     // Every CPU shadow write snoops the read cache, including slow writes.
     // Updating only when read and write mappings agree handles RAMRD !=
@@ -155,6 +157,7 @@ module vtw_turbo_cache #(
     wire [MAP_INDEX_BITS:0] fill_map_index = {map_rw, page_set(map_addr[15:8])};
     wire [WORD_INDEX_BITS-1:0] snoop_index = word_set(snoop_addr);
     wire [WORD_INDEX_BITS-1:0] fill_index = word_set(byte_addr);
+    assign word_fill_set = fill_index;
     // Physical-page identity survives address-table eviction and separate
     // RAMRD/RAMWRT mappings. A write to the other bank leaves this line alone.
     wire snoop_hit = !snoop_low && word_valid_q[snoop_index] &&

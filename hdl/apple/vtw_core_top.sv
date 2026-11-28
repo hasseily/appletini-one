@@ -1389,6 +1389,64 @@ module vtw_core_top (
                     cycle_addr_q[7:2] != 6'h3F;
         ra_fill_q <= rstn && ra_issue;
     end
+
+    // Track one word read ahead for an opcode or instruction operand.
+    // On its first opcode fetch, read the following word of the same page.
+    // Keep the translated page from the seed until this stream ends.
+    logic        ira_armed_q, ira_pending_q, ira_return_q;
+    logic [13:0] ira_word_q;
+    logic [5:0]  ira_next_off_q;
+    logic [9:0]  ira_phys_page_q;
+    logic [TURBO_BYTE_INDEX_BITS-3:0] ira_set_q;
+    wire [15:0] ira_addr = {ira_word_q[13:6], ira_next_off_q, 2'b00};
+    wire [17:0] ira_phys = {ira_phys_page_q, ira_next_off_q, 2'b00};
+
+    // X_CAPTURE has no demand access to port A. Launch from the registered
+    // prediction and qualify its response on the opcode acceptance edge.
+    // A normal cache hit queues the same read for the next X_CAPTURE.
+    wire ira_guess = ira_armed_q && pf_valid_q && pf_addr_q[15:2] == ira_word_q;
+    wire ira_issue = (xstate_q == X_CAPTURE) && (ira_pending_q || ira_guess) &&
+                     !turbo_invalidate && !rw_hold_q && !pause;
+    wire ira_accept = ira_issue && (ira_pending_q || (pf_accept && core_sync));
+    wire ira_normal_hit = (xstate_q == X_TURBO_DONE) && core_en && core_sync &&
+                          cycle_rw_q && cycle_addr_q[15:2] == ira_word_q;
+
+    // An X_CAPTURE issue returns before any demand or dev35 fill can arrive.
+    // A CPU store can use the cache write port on that edge. It takes priority.
+    wire ira_fill = ira_return_q && !turbo_invalidate && !rw_hold_q &&
+                    !(shadow_a_en && shadow_a_we);
+    wire ira_seed = ra_fill_q && cycle_is_pc_q && !turbo_invalidate && !rw_hold_q;
+    wire [15:0] cache_fill_addr = ira_return_q ? ira_addr :
+                                  ra_fill_q ? ra_addr : cycle_addr_q;
+    wire [TURBO_BYTE_INDEX_BITS-3:0] cache_fill_set;
+    // Within one page each word has its own set. A fill of the same set
+    // from another page evicts the tracked word. Pages 0 and 1 use their
+    // own store and cannot evict it.
+    wire ira_evicted = (turbo_byte_fill || ra_fill_q) && cache_fill_addr[15:9] != 0 &&
+                       cache_fill_set == ira_set_q && cache_fill_addr[15:8] != ira_word_q[13:6];
+    always_ff @(posedge clk) begin
+        ira_return_q <= rstn && ira_accept;
+        if (ira_seed)
+            ira_phys_page_q <= xl_shadow_phys[17:8];
+        if (ira_seed || ira_fill) begin
+            ira_word_q     <= cache_fill_addr[15:2];
+            ira_next_off_q <= cache_fill_addr[7:2] + 6'd1;
+            ira_set_q      <= cache_fill_set;
+        end
+        if (!rstn || turbo_invalidate || rw_hold_q) begin
+            ira_armed_q   <= 1'b0;
+            ira_pending_q <= 1'b0;
+        end else if (ira_seed || ira_fill) begin
+            ira_armed_q   <= cache_fill_addr[7:2] != 6'h3F;
+            ira_pending_q <= 1'b0;
+        end else if (ira_evicted || ira_accept) begin
+            ira_armed_q   <= 1'b0;
+            ira_pending_q <= 1'b0;
+        end else if (ira_armed_q && ira_normal_hit) begin
+            ira_armed_q   <= 1'b0;
+            ira_pending_q <= 1'b1;
+        end
+    end
     vtw_turbo_cache #(.BYTE_INDEX_BITS(TURBO_BYTE_INDEX_BITS)) turbo_cache_i (
         .clk(clk), .rstn(rstn), .invalidate(turbo_flush_all),
         .drop(turbo_ext_plain && !turbo_remap), .drop_addr(sh_addr[15:0]),
@@ -1406,9 +1464,9 @@ module vtw_core_top (
         .map_fill(turbo_map_fill), .map_addr(cycle_addr_q),
         .map_rw(cycle_rw_q), .map_phys(xl_shadow_phys),
         .map_fast_write(turbo_map_fast_write),
-        .byte_fill(turbo_byte_fill || ra_fill_q),
-        .byte_addr(ra_fill_q ? ra_addr : cycle_addr_q),
-        .word_data(shadow_a_rdata32), .byte_phys(xl_shadow_phys),
+        .byte_fill(turbo_byte_fill || ra_fill_q || ira_fill),
+        .byte_addr(cache_fill_addr), .word_fill_set(cache_fill_set),
+        .word_data(shadow_a_rdata32), .byte_phys(ira_return_q ? ira_phys : xl_shadow_phys),
         .snoop_write(shadow_a_en && shadow_a_we),
         .snoop_addr(cycle_addr_q),
         .snoop_phys(shadow_a_addr),
@@ -1498,12 +1556,13 @@ module vtw_core_top (
      * memory, and a held core's outputs must not scribble on it. */
     assign shadow_a_en   = core_shadow_issue || floating_scan_issue ||
                           turbo_shadow_write || turbo_shadow_read ||
-                          ra_issue;
+                          ra_issue || ira_issue;
     // Address selection depends only on the captured request. Completion
     // permission gates the write enable, not the RAM address or snoop tag.
     wire turbo_write_address = (xstate_q == X_TURBO_DONE) && !cycle_rw_q;
     assign shadow_a_addr = floating_scan_issue
                          ? {2'b00, floating_scan_addr_q}
+                         : (xstate_q == X_CAPTURE) ? ira_phys
                          : ra_issue ? {xl_shadow_phys[17:8], ra_off_q, 2'b00}
                          : turbo_write_address ? turbo_write_phys_q : xl_shadow_phys;
     assign shadow_a_we   = (core_shadow_issue && xl_is_write) || turbo_shadow_write;

@@ -1284,8 +1284,9 @@ module tb_vtw_turbo;
         $display("VTW TURBO VIDEO BANKS/BACKPRESSURE PASS");
     endtask
 
-    // ONE//e: the same writes go to the renderer only. Nothing is posted
-    // to the bus, nothing is pending, and the switch accesses do not wait.
+    // ONE//e: the same writes go to the renderer only. No video byte is
+    // posted to the bus, nothing is pending, and the switch accesses do not
+    // wait. The two RAMWRT writes are the only posted bus writes.
     task automatic direct_video_no_mirror;
         integer started, mirrored_clocks, plain_clocks;
         for (int pass = 0; pass < 2; pass++) begin
@@ -1307,7 +1308,9 @@ module tb_vtw_turbo;
                 await_video_drain();
             end else begin
                 plain_clocks = marker_cycle[15] - started;
-                check(direct_video_writes == 1536 && cnt_posted_writes == 0 &&
+                // Let the two queued RAMWRT writes reach the bus.
+                repeat (2000) @(posedge clk);
+                check(direct_video_writes == 1536 && cnt_posted_writes == 2 &&
                       !dut.video_mirror_pending && dut.video_all_drained,
                       "ONE//e video writes reached the bus or stayed pending");
                 for (int i = 0; i < 1024; i++)
@@ -1828,7 +1831,8 @@ module tb_vtw_turbo;
             guard++;
         end
         check(guard < 200000 && video_record_addr == 17'h008E0 &&
-              direct_video_writes == 1 && cnt_posted_writes == 0,
+              direct_video_writes == 1 &&
+              cnt_posted_writes == (kind == 2 ? 1 : 0),
               "mode exit did not park an unaccepted video byte behind deferred data");
         if (kind == 1) video_record_enable = 1'b0;
         else speed_mode = 2'd0;
@@ -1864,7 +1868,9 @@ module tb_vtw_turbo;
         await_video_drain();
         check((kind == 2 ? mb_aux[16'h08DF] : mb_ram[16'h08DF]) === 8'h3C &&
               mb_ram[16'h08E0] === 8'hA7 &&
-              direct_video_writes == (kind == 2 ? 2 : 1) && cnt_posted_writes == 2,
+              direct_video_writes == (kind == 2 ? 2 : 1) &&
+              // kind 2: the first RAMWRT write is a posted write too.
+              cnt_posted_writes == (kind == 2 ? 3 : 2),
               "post-stall mode exit lost or duplicated a deferred/classic video write");
         sh_check(kind == 2 ? 18'h108DF : 18'h008DF, 8'h3C);
         sh_check(18'h008E0, 8'hA7);

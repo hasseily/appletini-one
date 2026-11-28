@@ -836,7 +836,8 @@ module vtw_core_top (
 
     assign arm_owns_bus      = !core_run;
     assign eng_req_valid_raw = arm_owns_bus ? arm_pending_q : fsm_req_valid;
-    assign eng_req_valid = !req_inflight_q &&
+    wire         arm_req_post_wait;
+    assign eng_req_valid = !req_inflight_q && !arm_req_post_wait &&
         (video_sync_active ? video_sync_req_valid :
          (eng_req_valid_raw && !video_active_pending_q &&
           (!video_full_flush || (!arm_owns_bus && fsm_req_valid))));
@@ -1518,6 +1519,23 @@ module vtw_core_top (
     wire video_selected = (video_record_enable === 1'b1) &&
                           speed_mode == SPEED_TURBO;
     logic video_mirror_mode_q;
+    /* Memory-switch writes that the CPU does not wait for: RAMRD, RAMWRT,
+     * ALTZP ($C002-$C005, $C008, $C009) and the RamWorks bank ($C073). The
+     * private tracker applies the write in X_ROUTE, as for a bus cycle.
+     * The physical copy goes into the posted queue, in order with the
+     * video writes that these switches steer. No reply comes from the bus
+     * for a write, and no slot or I/O cycle depends on these switches.
+     * Only TURBO speed uses this path. Direct-video mode and a full queue
+     * keep the bus cycle. */
+    wire xl_sw_post = xl_is_bus && xl_is_write &&
+        (eff_mode == SPEED_TURBO) &&
+        (((cycle_addr_q[15:4] == 12'hC00) &&
+          ((cycle_addr_q[3:1] == 3'd1) || (cycle_addr_q[3:1] == 3'd2) ||
+           (cycle_addr_q[3:1] == 3'd4))) ||
+         (cycle_addr_q == 16'hC073));
+    wire sw_post_req = core_active && (xstate_q == X_ROUTE) && xl_sw_post;
+    wire sw_post_accept = sw_post_req && !eng_post_full &&
+                          !video_mirror_mode_q;
     wire video_coalesce_ready, video_coalesce_drained;
     wire video_active_drained;
     wire [1:0] video_bank_drained;
@@ -1525,6 +1543,8 @@ module vtw_core_top (
     wire [16:0] video_mirror_addr;
     wire [7:0] video_mirror_data;
     wire video_post_idle = eng_post_idle && !post_stage_valid_q;
+    // ARM bus cycles must see the switch state of all queued writes.
+    assign arm_req_post_wait = arm_owns_bus && !video_post_idle;
     wire video_all_drained = video_coalesce_drained && video_post_idle && !video_sync_active;
     // A stalled write may see TURBO selected again during a bank flush.
     // Keep admission closed until the saved physical switches are restored.
@@ -1646,7 +1666,7 @@ module vtw_core_top (
      * not expected. Keeping it in the handshake still makes a stray CPU0
      * request fail closed instead of replacing a core write. */
     assign arm_post_ready = core_active && !eng_post_full && !core_post_req &&
-                            !video_mirror_mode_q;
+                            !sw_post_req && !video_mirror_mode_q;
     wire arm_post_accept = arm_post_we && arm_post_ready;
 
     /* Register the final accepted tuple before the queue. This cuts address
@@ -1666,6 +1686,7 @@ module vtw_core_top (
         end
         else begin
             post_stage_valid_q <= core_post_accept || arm_post_accept ||
+                                  sw_post_accept ||
                                   (video_mirror_valid && video_mirror_ready);
             /* Capture the core tuple without the posted classifier as a
              * register enable. ARM wins this data mux only when its handshake
@@ -2308,6 +2329,10 @@ module vtw_core_top (
                             // instead of the floating game-connector level.
                             core_data_in_q <= 8'h00;
                             xstate_q       <= X_DEAD;
+                        end
+                        else if (sw_post_accept) begin
+                            // The queue has the write. No bus wait.
+                            xstate_q <= X_DEAD;
                         end
                         else begin
                             xstate_q <= X_BUS;

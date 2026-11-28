@@ -452,9 +452,15 @@ module vtw_bus_engine #(
      * text-buffer writes before any register access so SHOW enters the
      * capture stream after every byte it exposes. */
     wire sync_slot7_devsel = (sync_addr_q[15:4] == 12'hC0F);
+    /* The core posts RAMRD, RAMWRT, ALTZP and RamWorks-bank writes. A
+     * bus cycle that sets or reads these switches ($C000-$C00F writes,
+     * $C01x, $C07x) must come after the queued ones. */
+    wire sync_mem_switch = ((sync_addr_q[15:4] == 12'hC00) && !sync_rw_q) ||
+                           (sync_addr_q[15:4] == 12'hC01) ||
+                           (sync_addr_q[15:4] == 12'hC07);
     wire sync_flush_wait = (vtw_is_video_window(sync_addr_q, 1'b1, 1'b1) ||
                             vtw_is_bank_steer(sync_addr_q, sync_rw_q) ||
-                            sync_slot7_devsel) &&
+                            sync_mem_switch || sync_slot7_devsel) &&
                             (post_fill_q != '0);
     wire [1:0] dbg_current_kind =
         (cyc_q == CYC_POST) ? 2'd1 :

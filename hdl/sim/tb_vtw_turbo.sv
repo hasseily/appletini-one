@@ -903,6 +903,42 @@ module tb_vtw_turbo;
         freeze_core();
     endtask
 
+    task automatic hold_on_read_ahead_fill;
+        begin_program(2'd3);
+        sh_write(18'h05040, 8'h76);
+        sh_write(18'h05044, 8'h19);
+        absolute(8'hAD, 16'h5044);
+        absolute(8'h8D, 16'hA100);
+        repeat (8) emit(8'hEA);  // Give the host time to update $5044.
+        absolute(8'hAD, 16'h5040);
+        absolute(8'hAD, 16'h5044);
+        absolute(8'h8D, 16'hA101);
+        halt_loop();
+        start_program();
+
+        wait_marker(0, 1);
+        check(marker_value[0] === 8'h19, "CPU did not read the initial byte at $5044");
+        sh_write(18'h05044, 8'hE7);  // Drops the word but leaves the old data in LUT RAM.
+
+        // The miss at $5040 reads $5044 ahead. Request an ARM hold on
+        // its fill edge, when the cache blocks the new tag and data.
+        do @(negedge clk); while (!(dut.ra_fill_q && dut.ra_addr == 16'h5044));
+        arm_rw_flush_req = 1'b1;
+        @(negedge clk);
+        arm_rw_flush_req = 1'b0;
+        wait (arm_rw_flush_done);
+        @(negedge clk);
+        arm_rw_hold_release = 1'b1;
+        @(negedge clk);
+        arm_rw_hold_release = 1'b0;
+
+        wait_marker(1, 1);
+        sh_check(18'h05044, 8'hE7);
+        check(marker_value[1] === 8'hE7,
+              $sformatf("held read-ahead returned $%02X at $5044, expected $E7", marker_value[1]));
+        freeze_core();
+    endtask
+
     task automatic bank_program;
         begin_program(2'd3);
         sh_write(18'h09000, 8'h11);
@@ -1905,6 +1941,7 @@ module tb_vtw_turbo;
         $display("VTW TURBO SPEED zero page: TURBO cold/hot=%0d/%0d clocks",
                  zp_cold, zp_hot);
         coherency_program();
+        hold_on_read_ahead_fill();
         bank_program();
         ramworks_program();
         selfmod_program();

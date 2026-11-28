@@ -217,7 +217,9 @@ module vtw_turbo_cache #(
             if (drop_addr[15:9] == 7'd0)
                 low_valid_q[drop_addr[8:2]] <= 1'b0;
         end
-        else begin
+        // A hold blocks the tag and data writes. Keep the valid bits
+        // unchanged so a blocked fill cannot expose an old entry.
+        else if (!block) begin
             if (map_fill)
                 map_valid_q[fill_map_index] <= 1'b1;
             if (byte_fill && !snoop_write && !fill_low)

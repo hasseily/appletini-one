@@ -1377,6 +1377,7 @@ module vtw_core_top (
      * them stops the fill. The page is the same, so the translation is
      * the same. Pages 0 and 1 have their own store and are not included. */
     logic [5:0] ra_off_q;
+    wire [17:0] shadow_write_addr;
     logic       ra_ok_q, ra_fill_q;
     wire ra_issue = (xstate_q == X_MEM_CAPTURE) && cycle_rw_q &&
                     xl_shadow_valid && ra_ok_q && !turbo_invalidate;
@@ -1464,12 +1465,14 @@ module vtw_core_top (
         .map_fill(turbo_map_fill), .map_addr(cycle_addr_q),
         .map_rw(cycle_rw_q), .map_phys(xl_shadow_phys),
         .map_fast_write(turbo_map_fast_write),
-        .byte_fill(turbo_byte_fill || ra_fill_q || ira_fill),
+        // The cache itself stops a fill on a flush, a hold or a CPU
+        // store, so the late terms of ira_fill stay out of its write enable.
+        .byte_fill(turbo_byte_fill || ra_fill_q || (ira_return_q && !rw_hold_q)),
         .byte_addr(cache_fill_addr), .word_fill_set(cache_fill_set),
         .word_data(shadow_a_rdata32), .byte_phys(ira_return_q ? ira_phys : xl_shadow_phys),
         .snoop_write(shadow_a_en && shadow_a_we),
         .snoop_addr(cycle_addr_q),
-        .snoop_phys(shadow_a_addr),
+        .snoop_phys(shadow_write_addr),
         .snoop_data(cycle_wdata_q)
     );
     /* The hold handshake needs the core parked in a completed memory
@@ -1560,11 +1563,16 @@ module vtw_core_top (
     // Address selection depends only on the captured request. Completion
     // permission gates the write enable, not the RAM address or snoop tag.
     wire turbo_write_address = (xstate_q == X_TURBO_DONE) && !cycle_rw_q;
+    // A CPU store is never a scanner read or a read-ahead. The cache snoop
+    // takes this address, without the three read sources in front of it.
+    assign shadow_write_addr = turbo_write_address ? turbo_write_phys_q : xl_shadow_phys;
+    // The two read-ahead sources are alone on port A in their states, so
+    // the state selects the address and the late issue terms only the enable.
     assign shadow_a_addr = floating_scan_issue
                          ? {2'b00, floating_scan_addr_q}
                          : (xstate_q == X_CAPTURE) ? ira_phys
-                         : ra_issue ? {xl_shadow_phys[17:8], ra_off_q, 2'b00}
-                         : turbo_write_address ? turbo_write_phys_q : xl_shadow_phys;
+                         : (xstate_q == X_MEM_CAPTURE) ? {xl_shadow_phys[17:8], ra_off_q, 2'b00}
+                         : shadow_write_addr;
     assign shadow_a_we   = (core_shadow_issue && xl_is_write) || turbo_shadow_write;
 
     always_ff @(posedge clk) begin

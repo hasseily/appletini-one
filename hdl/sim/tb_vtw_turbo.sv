@@ -943,7 +943,10 @@ module tb_vtw_turbo;
     // an operand, but it can only install a word after an accepted opcode.
     wire instruction_ahead_read = dut.xstate_q == dut.X_CAPTURE &&
                                   dut.shadow_a_en && !dut.shadow_a_we;
+    // The cache stops a fill itself on a flush, a hold or a CPU store.
     wire instruction_ahead_fill = dut.turbo_cache_i.byte_fill &&
+                                  !dut.turbo_cache_i.block &&
+                                  !dut.turbo_cache_i.snoop_write &&
                                   !dut.turbo_byte_fill && !dut.ra_fill_q;
 
     task automatic load_main_code(input logic [15:0] addr, input byte code[]);
